@@ -63,7 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         root = pathlib.Path(directory)
         venv = root / "venv"
         assert _run(["uv", "venv", str(venv), "--python", "3.13"]).returncode == 0
-        python = venv / "bin/python"
+        # Windows puts an interpreter in Scripts/, everything else in bin/.
+        python = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
         install = _run(["uv", "pip", "install", "--python", str(python), str(wheel)])
         assert install.returncode == 0, install.stdout + install.stderr
         # The point of the package: no numpy, no matplotlib.

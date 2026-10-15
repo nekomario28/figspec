@@ -54,6 +54,58 @@ jobs:
           path: dist/*.whl
           retention-days: 7
 
+  # One wheel per platform, installed and exercised on that platform. abi3 means
+  # Python 3.9+ is covered by a single wheel, so this matrix is small.
+  wheels:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: auto
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: auto
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            manylinux: "off"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: "off"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
+        with:
+          command: build
+          args: --release --locked --out dist
+          manylinux: ${{ matrix.manylinux }}
+          target: ${{ matrix.target }}
+      - name: This wheel installs and draws a figure here
+        run: uv run --python 3.13 python scripts/check_consumer.py --wheel-dir dist
+      - run: python3 -c "import pathlib; [print(p.name) for p in pathlib.Path('dist').glob('*.whl')]"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+          retention-days: 7
+      - name: Check the wheel's platform tag is one PyPI accepts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls dist/*.whl
+          if ls dist/*.whl | grep -q "linux_x86_64\|linux_aarch64"; then
+            echo "::error::a wheel still carries a bare linux tag, which PyPI refuses"
+            exit 1
+          fi
+
   # A wheel built on a modern runner carries `linux_x86_64`, which PyPI refuses.
   # Uploadable wheels need the manylinux policy, which needs the manylinux
   # container: locally the error is explicit —

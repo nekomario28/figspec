@@ -74,6 +74,44 @@ pub enum Mark {
         categories: Vec<String>,
         series: Vec<Series>,
     },
+    /// A matrix drawn as coloured cells: the value is the colour, and both axes
+    /// are categorical.
+    Heatmap {
+        /// One inner vector per row. Row 0 is drawn at the **bottom**, because a
+        /// y axis grows upward — measured: `[[north...], [west...]]` renders north
+        /// below west, and `row_labels` is read in the same order.
+        values: Vec<Vec<f64>>,
+        /// Names for the rows and columns. Shown on the axes when declared, and
+        /// checked against the matrix: a label array that does not match is a
+        /// caption for something else.
+        #[serde(default)]
+        row_labels: Option<Vec<String>>,
+        #[serde(default)]
+        col_labels: Option<Vec<String>>,
+        #[serde(default)]
+        color_map: Option<ColorMap>,
+        #[serde(default)]
+        label: Option<String>,
+    },
+}
+
+/// The colour ramp a heatmap is drawn with.
+///
+/// A closed set rather than a free string: an unknown name is refused when the
+/// model is read (exit 2), so a typo cannot silently become the default ramp and
+/// a picture that means something else.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorMap {
+    Viridis,
+    Turbo,
+    Inferno,
+    Magma,
+    Plasma,
+    Cividis,
+    Warm,
+    Cool,
+    Cubehelix,
 }
 
 /// One series of a grouped bar chart.
@@ -103,6 +141,7 @@ impl Mark {
                 .iter()
                 .flat_map(|one| one.values.iter().copied())
                 .collect(),
+            Mark::Heatmap { values, .. } => values.iter().flatten().copied().collect(),
         }
     }
 
@@ -179,6 +218,7 @@ impl Mark {
             Mark::Scatter { .. } => "scatter",
             Mark::Bar { .. } => "bar",
             Mark::GroupedBar { .. } => "grouped_bar",
+            Mark::Heatmap { .. } => "heatmap",
         }
     }
 
@@ -192,6 +232,20 @@ impl Mark {
 
     /// How many bars the mark draws per category: one for `Bar`, one per series
     /// for `GroupedBar`.
+    /// Whether the mark declares nothing to draw.
+    ///
+    /// The renderer consults this rather than deciding for itself: `refusals()` is
+    /// the single list of what cannot be drawn, and a mark that looked empty only
+    /// to the renderer would be reported as a clean figure and then refused.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Mark::Line { points, .. } | Mark::Scatter { points, .. } => points.is_empty(),
+            Mark::Bar { values, .. } => values.is_empty(),
+            Mark::GroupedBar { series, .. } => series.is_empty(),
+            Mark::Heatmap { values, .. } => values.is_empty() || values.iter().any(Vec::is_empty),
+        }
+    }
+
     pub fn values_per_category(&self) -> Vec<usize> {
         match self {
             Mark::Bar { values, .. } => vec![values.len()],
@@ -338,6 +392,72 @@ impl Figure {
                     ),
                 });
             }
+            if mark.is_empty() {
+                refusals.push(Refusal {
+                    code: "empty-mark",
+                    mark: Some(index),
+                    message: format!("{} mark declares nothing to draw", mark.kind()),
+                });
+            }
+            if let Mark::Line { points, .. } = mark {
+                if points.len() == 1 {
+                    refusals.push(Refusal {
+                        code: "short-line",
+                        mark: Some(index),
+                        message: "a line needs at least two points, and this one has 1".to_string(),
+                    });
+                }
+            }
+            if let Mark::Heatmap {
+                values,
+                row_labels,
+                col_labels,
+                ..
+            } = mark
+            {
+                // A row that is not the width of the first is not a matrix, and
+                // drawing it would silently drop or stretch cells.
+                if let Some(width) = values.first().map(Vec::len) {
+                    for (row, cells) in values.iter().enumerate() {
+                        if cells.len() != width {
+                            refusals.push(Refusal {
+                                code: "mismatched-lengths",
+                                mark: Some(index),
+                                message: format!(
+                                    "heatmap row {row} has {} cells for {width} columns",
+                                    cells.len()
+                                ),
+                            });
+                        }
+                    }
+                }
+                if let Some(labels) = row_labels {
+                    if labels.len() != values.len() {
+                        refusals.push(Refusal {
+                            code: "mismatched-lengths",
+                            mark: Some(index),
+                            message: format!(
+                                "heatmap declares {} row labels for {} rows",
+                                labels.len(),
+                                values.len()
+                            ),
+                        });
+                    }
+                }
+                if let Some(labels) = col_labels {
+                    if labels.len() != values.first().map_or(0, Vec::len) {
+                        refusals.push(Refusal {
+                            code: "mismatched-lengths",
+                            mark: Some(index),
+                            message: format!(
+                                "heatmap declares {} column labels for {} columns",
+                                labels.len(),
+                                values.first().map_or(0, Vec::len)
+                            ),
+                        });
+                    }
+                }
+            }
             if mark.errors().iter().any(|value| *value < 0.0) {
                 refusals.push(Refusal {
                     code: "negative-error",
@@ -359,6 +479,29 @@ impl Figure {
                         });
                     }
                 }
+            }
+        }
+        // One pair of axes carries one set of labels. Two marks declaring
+        // different names for the same axis cannot both be shown, and picking one
+        // would caption the other's data with the wrong names.
+        let declared: Vec<&Vec<String>> = self
+            .marks
+            .iter()
+            .filter_map(|mark| match mark {
+                Mark::Heatmap {
+                    row_labels: Some(labels),
+                    ..
+                } => Some(labels),
+                _ => None,
+            })
+            .collect();
+        if let Some(first) = declared.first() {
+            if declared.iter().any(|labels| *labels != *first) {
+                refusals.push(Refusal {
+                    code: "ambiguous-labels",
+                    mark: None,
+                    message: "two marks declare different row labels for the same axis".to_string(),
+                });
             }
         }
         refusals

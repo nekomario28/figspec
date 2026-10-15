@@ -11,7 +11,7 @@ use figspec::model::{Figure, Mark, Scale, Series};
 use figspec::place::{boxes, category_center, PlotArea};
 use figspec::{storyboard_svg, to_svg};
 
-use kuva::plot::{BarPlot, LinePlot, ScatterPlot};
+use kuva::plot::{BarPlot, Heatmap, LinePlot, ScatterPlot};
 use kuva::render::layout::{ComputedLayout, Layout};
 use kuva::render::plots::Plot;
 use kuva::render::render::{render_multiple, Primitive};
@@ -42,6 +42,16 @@ fn bars(values: Vec<f64>) -> Mark {
         categories: (0..values.len()).map(|index| format!("c{index}")).collect(),
         values,
         color: None,
+        label: None,
+    }
+}
+
+fn heat(values: Vec<Vec<f64>>) -> Mark {
+    Mark::Heatmap {
+        values,
+        row_labels: None,
+        col_labels: None,
+        color_map: None,
         label: None,
     }
 }
@@ -294,6 +304,36 @@ fn a_log_axis_maps_as_the_engine_does() {
             "y {y} outside {boxed:?}"
         );
     }
+}
+
+#[test]
+fn a_heatmap_box_covers_every_cell_the_engine_draws() {
+    let figure = Figure::new().with_mark(heat(vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]));
+    let boxed = boxes(&figure).expect("boxes")[0].expect("an extent");
+    let plot = || -> Plot {
+        Heatmap::new()
+            .with_data(vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]])
+            .into()
+    };
+    let layout = Layout::auto_from_plots(&[plot()]);
+    let area = PlotArea::of(&ComputedLayout::from_layout(&layout));
+    let scene = render_multiple(vec![plot()], layout);
+    let mut cells = 0;
+    for element in &scene.elements {
+        if let Primitive::RectBatch { x, y, w, h, .. } = element {
+            for index in 0..x.len() {
+                cells += 1;
+                assert!(boxed.left <= x[index] + 1e-9, "{boxed:?} {element:?}");
+                assert!(boxed.right >= x[index] + w[index] - 1e-9);
+                assert!(boxed.top <= y[index] + 1e-9);
+                assert!(boxed.bottom >= y[index] + h[index] - 1e-9);
+                assert!(area.left <= x[index] + 1e-9);
+                assert!(area.right >= x[index] + w[index] - 1e-9);
+            }
+        }
+    }
+    // Every cell of a 2x3 matrix, drawn by the engine, inside figspec's box.
+    assert_eq!(cells, 6);
 }
 
 #[test]

@@ -15,7 +15,7 @@
 
 use kuva::prelude::*;
 
-use crate::model::{Figure, Mark, Scale};
+use crate::model::{ColorMap, Figure, Mark, Scale};
 
 /// Why a figure could not be rendered.
 #[derive(Debug)]
@@ -47,7 +47,7 @@ fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
         return Err(refuse(refusal.message.clone()));
     }
     let mut plots = Vec::with_capacity(figure.marks.len());
-    for (index, mark) in figure.marks.iter().enumerate() {
+    for mark in &figure.marks {
         match mark {
             Mark::Line {
                 points,
@@ -56,12 +56,6 @@ fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
                 color,
                 label,
             } => {
-                if points.len() < 2 {
-                    return Err(refuse(format!(
-                        "mark {index}: a line needs at least two points, got {}",
-                        points.len()
-                    )));
-                }
                 let mut plot = LinePlot::new()
                     .with_data(points.iter().map(|pair| (pair[0], pair[1])))
                     .with_color(color.clone().unwrap_or_else(|| DEFAULT_COLOR.to_string()));
@@ -84,9 +78,6 @@ fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
                 color,
                 label,
             } => {
-                if points.is_empty() {
-                    return Err(refuse(format!("mark {index}: a scatter needs points")));
-                }
                 let mut plot = ScatterPlot::new()
                     .with_data(points.iter().map(|pair| (pair[0], pair[1])))
                     .with_color(color.clone().unwrap_or_else(|| DEFAULT_COLOR.to_string()));
@@ -110,13 +101,6 @@ fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
                 color,
                 label,
             } => {
-                if categories.len() != values.len() {
-                    return Err(refuse(format!(
-                        "mark {index}: {} categories but {} values",
-                        categories.len(),
-                        values.len()
-                    )));
-                }
                 let mut plot = BarPlot::new()
                     .with_bars(
                         categories
@@ -134,20 +118,6 @@ fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
                 plots.push(plot.into());
             }
             Mark::GroupedBar { categories, series } => {
-                for one in series {
-                    if one.values.len() != categories.len() {
-                        return Err(refuse(format!(
-                            "mark {index}: a series has {} values for {} categories",
-                            one.values.len(),
-                            categories.len()
-                        )));
-                    }
-                }
-                if series.is_empty() {
-                    return Err(refuse(format!(
-                        "mark {index}: a grouped bar needs a series"
-                    )));
-                }
                 let colors: Vec<String> = series
                     .iter()
                     .map(|one| {
@@ -176,6 +146,25 @@ fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
                 }
                 plots.push(plot.into());
             }
+            Mark::Heatmap {
+                values,
+                row_labels,
+                col_labels,
+                color_map,
+                label,
+            } => {
+                let mut plot = Heatmap::new().with_data(values.clone());
+                if let (Some(rows), Some(cols)) = (row_labels, col_labels) {
+                    plot = plot.with_labels(rows.clone(), cols.clone());
+                }
+                if let Some(map) = color_map {
+                    plot = plot.with_color_map(map_of(*map));
+                }
+                if let Some(label) = label {
+                    plot = plot.with_legend(label.clone());
+                }
+                plots.push(plot.into());
+            }
         }
     }
     if plots.is_empty() {
@@ -184,6 +173,22 @@ fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
         ));
     }
     Ok(plots)
+}
+
+/// The engine's ramp for a model's choice.
+fn map_of(map: ColorMap) -> kuva::plot::ColorMap {
+    use kuva::plot::ColorMap as K;
+    match map {
+        ColorMap::Viridis => K::Viridis,
+        ColorMap::Turbo => K::Turbo,
+        ColorMap::Inferno => K::Inferno,
+        ColorMap::Magma => K::Magma,
+        ColorMap::Plasma => K::Plasma,
+        ColorMap::Cividis => K::Cividis,
+        ColorMap::Warm => K::Warm,
+        ColorMap::Cool => K::Cool,
+        ColorMap::Cubehelix => K::Cubehelix,
+    }
 }
 
 /// The smallest and largest y an error bar reaches, when a mark has any.
@@ -236,6 +241,22 @@ fn layout_of(figure: &Figure, plots: &[Plot]) -> Layout {
     }
     layout.log_x = matches!(figure.x_scale, Scale::Log);
     layout.log_y = matches!(figure.y_scale, Scale::Log);
+    // A heatmap's names are axis tick labels, which live on the layout rather than
+    // on the plot. Reading them from the mark keeps the declaration the only place
+    // a name is written.
+    for mark in &figure.marks {
+        if let Mark::Heatmap {
+            row_labels,
+            col_labels,
+            ..
+        } = mark
+        {
+            if let (Some(rows), Some(cols)) = (row_labels, col_labels) {
+                layout = layout.with_y_categories(rows.clone());
+                layout = layout.with_x_categories(cols.clone());
+            }
+        }
+    }
     layout.title = figure.title.clone();
     layout.x_label = figure.x_label.clone();
     layout.y_label = figure.y_label.clone();

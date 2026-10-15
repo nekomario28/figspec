@@ -4,6 +4,7 @@ The figure is a plain dict (JSON-able). Everything here either produces one or
 consumes one:
 
     model = figspec.from_matplotlib(fig)      # an existing figure, converted
+    # the model also has a `heatmap` mark, which matplotlib's imshow cannot become
     report = figspec.inspect(model)           # checks, without rendering
     figspec.save(model, "revenue.svg")        # rendered by the Rust engine
 
@@ -354,7 +355,8 @@ def _marks(axes: Any) -> list[dict[str, Any]]:
             "figspec cannot represent "
             + ", ".join(sorted(set(unsupported)))
             + "; it converts lines, scatter, bars and grouped bars, with error "
-            "bars. Refusing rather than converting part of the figure"
+            "bars, and the *model* also has a heatmap mark — write that one "
+            "directly. Refusing rather than converting part of the figure"
         )
     return marks
 

@@ -63,6 +63,21 @@ pub const CODEBOOK: &[(&str, &str, &str)] = &[
         "the figure declares no marks, so there is nothing to read",
     ),
     (
+        "empty-mark",
+        ERROR,
+        "a mark declares nothing to draw, so it would render as nothing",
+    ),
+    (
+        "short-line",
+        ERROR,
+        "a line has fewer than two points, so there is no line to draw",
+    ),
+    (
+        "ambiguous-labels",
+        ERROR,
+        "two marks declare different names for the same axis, so one would caption the other",
+    ),
+    (
         "non-finite-value",
         ERROR,
         "a coordinate is NaN or infinite and cannot be placed",
@@ -70,7 +85,7 @@ pub const CODEBOOK: &[(&str, &str, &str)] = &[
     (
         "mismatched-lengths",
         ERROR,
-        "a bar mark's categories and values disagree in number",
+        "a collection disagrees in number with what it annotates: a group's series, an error array and its points, or a heatmap's rows and labels",
     ),
     (
         "truncated-baseline",

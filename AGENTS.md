@@ -21,11 +21,13 @@ In Python: `figspec.inspect(model)`, `figspec.render_svg(model)`,
 ## Reading the report
 
 - `error` — `truncated-baseline` (bars start above zero), `mismatched-lengths`,
-  `non-finite-value`, `non-positive-on-log-scale`, `empty-figure`.
+  `non-finite-value`, `non-positive-on-log-scale`, `empty-figure`, `empty-mark`,
+  `short-line`, `ambiguous-labels`.
 - `warn` — `no-title`.
 - `info` — `no-axis-label`.
 
 Common fixes: `truncated-baseline` → drop `y_min`, or use a line instead of bars;
+`empty-mark` → give the mark data; `short-line` → a line needs two points;
 `mismatched-lengths` → one value per category; `non-positive-on-log-scale` → a log
 axis needs positive values; `empty-figure` → add a mark.
 

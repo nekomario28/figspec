@@ -289,6 +289,9 @@ fn the_codebook_names_every_code_the_checks_emit() {
     // checks. Every code below is constructed above.
     let emitted = [
         "empty-figure",
+        "empty-mark",
+        "short-line",
+        "ambiguous-labels",
         "non-finite-value",
         "mismatched-lengths",
         "truncated-baseline",

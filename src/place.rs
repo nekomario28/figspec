@@ -190,6 +190,16 @@ impl PlotArea {
                 let (y_low, y_high) = value_span(&all)?;
                 Some((x_low, x_high, y_low, y_high))
             }
+            Mark::Heatmap { values, .. } => {
+                // Categorical on both axes: a cell index is a category, and the
+                // engine places the first at 1 exactly as it does for bars
+                // (measured: a 2x3 heatmap computes x_range (0.5, 3.5) and
+                // y_range (0.5, 2.5), and draws its cells across the whole plot).
+                let columns = values.first().map_or(0, Vec::len);
+                let (x_low, x_high) = self.category_span(columns)?;
+                let (y_low, y_high) = self.category_span(values.len())?;
+                Some((x_low, x_high, y_low, y_high))
+            }
         }
     }
 

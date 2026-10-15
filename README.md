@@ -31,7 +31,11 @@ figspec.save(model, "revenue.svg")
     {"kind": "scatter", "points": [[0, 30.0], [1, 33.0]]},
     {"kind": "grouped_bar", "categories": ["Q1", "Q2"],
      "series": [{"label": "north", "values": [31.0, 41.0]},
-                {"label": "south", "values": [29.0, 33.0]}]}
+                {"label": "south", "values": [29.0, 33.0]}]},
+    {"kind": "heatmap",
+     "values": [[31.5, 34.2], [22.0, 25.5]],
+     "row_labels": ["north", "south"], "col_labels": ["Q1", "Q2"],
+     "color_map": "viridis"}
   ]
 }
 ```
@@ -39,6 +43,12 @@ figspec.save(model, "revenue.svg")
 `y_err` is one magnitude per point, drawn both ways; `y_err_asymmetric` is
 `[lower, upper]` per point when the sides differ. Declaring both on one mark is
 refused, because one drawing cannot mean two things.
+
+A `heatmap` is a matrix: the value is the colour, both axes are categorical, and
+`color_map` is a closed set (`viridis` — the default — `turbo`, `inferno`,
+`magma`, `plasma`, `cividis`, `warm`, `cool`, `cubehelix`), so a typo cannot
+quietly become the default ramp. Its **row 0 is drawn at the bottom**, which is
+what a y axis means; `row_labels` is read in the same order as `values`.
 
 ## The storyboard
 
@@ -95,6 +105,9 @@ Few on purpose. Each one says what is wrong, where, and what to do instead.
 | `two-error-shapes` | error | a mark declares symmetric and asymmetric error bars at once |
 | `negative-error` | error | an error magnitude is negative, which is not a distance |
 | `empty-figure` | error | the figure declares no marks |
+| `empty-mark` | error | a mark declares nothing to draw, so it would render as nothing |
+| `short-line` | error | a line has fewer than two points, so there is no line to draw |
+| `ambiguous-labels` | error | two marks declare different names for the same axis, so one would caption the other |
 | `no-title` | warn | the figure has no title, so a reader cannot tell what it shows |
 | `no-axis-label` | info | an axis has no label |
 
@@ -102,8 +115,12 @@ Two kinds of finding, and the difference is deliberate:
 
 - **Refusals** — shapes that cannot be drawn as written. The checks report these
   and the renderer refuses them *from the same list*, so a rule cannot hold in one
-  and be ignored by the other. (Measured while writing it: a short error array was
-  reported by `inspect` and rendered anyway, silently without that point's bar.)
+  and be ignored by the other. The renderer has no refusals of its own: it consults
+  `refusals()` and nothing else, which `tests/refusals.rs` checks in both
+  directions. (Measured twice while writing it: a short error array was reported by
+  `inspect` and rendered anyway, silently without that point's bar; and an empty
+  scatter, a one-point line and a grouped bar with no series were reported as a
+  **clean figure** (exit 0) and refused by the renderer (exit 2).)
 - **Judgement** — a figure that draws fine while being misleading, such as bars
   that start above zero. Rendering it is how a reader sees the problem, so it is
   an error, not a refusal.

@@ -26,7 +26,12 @@ separate mark kinds rather than optional fields, because one series and several
 are different shapes and a field that changed the meaning would be two shapes
 pretending to be one.
 
-Three defects were found by the tests written for them, which is why the tests
+A **heatmap** mark carries a matrix, optional row/column names and a closed set of
+colour ramps; both axes are categorical, and its checks (ragged rows, label counts,
+an empty matrix, two names for one axis) live in the same `refusals()` list the
+renderer consults — see [slice 05](slices/05-heatmap.md).
+
+Five defects were found by the tests written for them, which is why the tests
 came first:
 
 - an error array one element short was **reported by the checks and rendered
@@ -35,17 +40,25 @@ came first:
   by a range ending at 12.0 — and the first fix did nothing, because the engine
   caps the padded range against the raw one, so both had to be extended;
 - `from_matplotlib` took the *first* axes' title for any axes, so a converted
-  chart could carry another chart's title.
+  chart could carry another chart's title;
+- a **storyboard** was impossible for a declared figure until kuva's computed
+  layout was found to be public — measured rather than assumed, so no fork and no
+  second layout derivation;
+- and `inspect` called a figure **clean** (exit 0) in three places the renderer
+  refused (exit 2): an empty scatter, a one-point line, a grouped bar with no
+  series. The renderer now has no refusals of its own at all.
 
 ## Slices
 
 - [x] [01 — model, checks, renderer, CLI](slices/01-core.md)
 - [x] [02 — python bindings and the matplotlib importer](slices/02-python.md)
 - [ ] [03 — distribution](slices/03-release.md)
+- [x] [04 — the storyboard](slices/04-storyboard.md)
+- [x] [05 — a matrix, and one list of what cannot be drawn](slices/05-heatmap.md)
 
 ## Evidence
 
-- `cargo test`: 13 properties, including byte-identical renders and a refused
+- `cargo test`: 46 properties, including byte-identical renders and a refused
   unknown field. One test caught a false claim on the first run: the engine's
   clip ids come from a process-global counter, so two renders inside one process
   differed. The SVG is renumbered now.

@@ -217,3 +217,65 @@ def test_saving_a_storyboard_name_writes_the_storyboard(tmp_path):
     figure = figspec.save(model, tmp_path / "revenue.svg")
     assert "figspec-storyboard" in storyboard.read_text(encoding="utf-8")
     assert "figspec-storyboard" not in figure.read_text(encoding="utf-8")
+
+
+def test_a_heatmap_model_is_inspected_and_drawn_without_matplotlib():
+    model = {
+        "title": "Sales by region",
+        "x_label": "quarter",
+        "y_label": "region",
+        "marks": [
+            {
+                "kind": "heatmap",
+                "values": [[31.5, 34.2], [22.0, 25.5]],
+                "row_labels": ["north", "south"],
+                "col_labels": ["Q1", "Q2"],
+                "color_map": "magma",
+            }
+        ],
+    }
+    assert figspec.inspect(model) == []
+    svg = figspec.render_svg(model)
+    for name in ("north", "south", "Q1", "Q2"):
+        assert name in svg, name
+
+
+def test_a_ragged_matrix_is_an_error_and_says_where():
+    model = {"marks": [{"kind": "heatmap", "values": [[1.0, 2.0, 3.0], [4.0, 5.0]]}]}
+    problems = figspec.inspect(model)
+    errors = [p for p in problems if p["severity"] == "error"]
+    assert [p["code"] for p in errors] == ["mismatched-lengths"], problems
+    assert errors[0]["mark"] == 0
+    # The refusal names the row and the width it disagrees with.
+    with pytest.raises(ValueError, match=r"heatmap row 1 has 2 cells for 3 columns"):
+        figspec.render_svg(model)
+
+
+def test_an_unknown_colour_map_is_refused_not_defaulted():
+    model = {"marks": [{"kind": "heatmap", "values": [[1.0]], "color_map": "rainbow"}]}
+    with pytest.raises(ValueError, match="rainbow"):
+        figspec.render_svg(model)
+
+
+def test_an_empty_mark_is_an_error_rather_than_a_clean_report():
+    """Measured before: `inspect` said nothing and the renderer refused (exit 2)."""
+    for mark in (
+        {"kind": "scatter", "points": []},
+        {"kind": "line", "points": [[1.0, 2.0]]},
+        {"kind": "heatmap", "values": []},
+    ):
+        problems = figspec.inspect({"marks": [mark]})
+        errors = [p["code"] for p in problems if p["severity"] == "error"]
+        assert errors in (["empty-mark"], ["short-line"]), problems
+
+
+def test_an_imshow_figure_is_refused_and_the_refusal_names_the_heatmap_mark():
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    figure, axes = plt.subplots()
+    axes.imshow([[1.0, 2.0], [3.0, 4.0]])
+    with pytest.raises(ValueError, match="heatmap"):
+        figspec.from_matplotlib(figure)
+    plt.close(figure)

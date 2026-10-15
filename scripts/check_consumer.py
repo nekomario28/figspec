@@ -7,7 +7,7 @@ actually does, in isolation:
 
     uv venv <fresh>                     # no checkout on sys.path
     uv pip install <the wheel>          # not editable, not the workspace
-    python -c "import figspec; ..."     # render, inspect, exit accordingly
+    python -c "import figspec; ..."     # render, inspect, draw a storyboard
 
 Nothing here touches the developer's environment: the venv lives in a temporary
 directory and is deleted with it.
@@ -40,8 +40,15 @@ import figspec
 
 model = json.loads(pathlib.Path(sys.argv[1]).read_text())
 pathlib.Path(sys.argv[2]).write_text(figspec.render_svg(model), encoding="utf-8")
+storyboard = figspec.storyboard_svg(model)
 problems = figspec.inspect(model)
-print(json.dumps({"problems": [p["code"] for p in problems], "svg": True}))
+boxed = [p for p in problems if p.get("mark") is not None]
+print(json.dumps({
+    "problems": [p["code"] for p in problems],
+    "svg": True,
+    "boxes": storyboard.count("<rect") > 0,
+    "boxes_only_when_named": (not boxed) or "figspec-storyboard" in storyboard,
+}))
 """
 
 
@@ -108,6 +115,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         assert json.loads(run.stdout)["problems"] == ["truncated-baseline"], run.stdout
         print("consumer: the checks run from the installed wheel", flush=True)
+
+        # The storyboard comes from the same wheel, and the CLI has it too.
+        run = subprocess.run(
+            [str(python), "-c", SCRIPT, str(truncated_path), str(root / "s.svg")],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            cwd=root,
+        )
+        report = json.loads(run.stdout)
+        assert report["boxes"] and report["boxes_only_when_named"], run.stdout
+        print("consumer: the storyboard draws from the installed wheel", flush=True)
 
     print("Consumer check passed.")
     return 0

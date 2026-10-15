@@ -9,6 +9,7 @@ step() {
 }
 
 step cargo fmt --check
+step cargo clippy --locked --all-targets --all-features -- -D warnings
 step cargo test --locked
 step cargo build --locked --features python
 step uv run --python 3.13 --with maturin --with pytest --with matplotlib sh -c \

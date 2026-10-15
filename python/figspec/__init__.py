@@ -18,7 +18,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-__all__ = ["Model", "from_matplotlib", "inspect", "render_svg", "render_png", "save", "load"]
+__all__ = [
+    "Model",
+    "from_matplotlib",
+    "inspect",
+    "render_svg",
+    "render_png",
+    "storyboard_svg",
+    "save",
+    "load",
+]
 
 try:  # the compiled extension
     from . import _figspec as _core
@@ -62,10 +71,24 @@ def render_png(model: dict[str, Any]) -> bytes:
     return bytes(_core.render_png(Model(model).to_json()))
 
 
+def storyboard_svg(model: dict[str, Any]) -> str:
+    """The figure as an SVG with a numbered box on every mark a problem names.
+
+    The numbers are the positions of `inspect`'s problems (1-based), so the report
+    and the picture can be read against each other.
+    """
+    return _core.storyboard_svg(Model(model).to_json())
+
+
 def save(model: dict[str, Any], path: str | Path) -> Path:
     """Write the figure, choosing the format from the suffix."""
     path = Path(path)
-    if path.suffix.lower() == ".svg":
+    name = path.name.lower()
+    if name.endswith(".storyboard.svg"):
+        # The storyboard is a rendering too. It is written for the *composite*
+        # name: `.svg` alone would have matched first and written the figure.
+        path.write_text(storyboard_svg(model), encoding="utf-8")
+    elif path.suffix.lower() == ".svg":
         path.write_text(render_svg(model), encoding="utf-8")
     elif path.suffix.lower() == ".png":
         path.write_bytes(render_png(model))

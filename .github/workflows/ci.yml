@@ -25,6 +25,7 @@ jobs:
       - name: Rust formatting and lints
         run: |
           cargo fmt --check
+          cargo clippy --locked --all-targets --all-features -- -D warnings
           cargo build --locked --features python
       - name: Python tests (the compiled extension, not a stub)
         run: |

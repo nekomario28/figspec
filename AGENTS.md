@@ -10,9 +10,13 @@ inspected, so the check runs before the picture exists.
 2. `figspec inspect model.json` — exit 1 on any `error`.
 3. Fix, inspect again.
 4. `figspec render model.json -o chart.svg` (or `.png`).
+5. `figspec storyboard model.json -o chart.storyboard.svg` — the figure with the
+   marks the findings name boxed and numbered; the numbers are the positions in
+   step 2's report, so the two can be read against each other.
 
 In Python: `figspec.inspect(model)`, `figspec.render_svg(model)`,
-`figspec.save(model, "chart.svg")`, `figspec.from_matplotlib(figure)`.
+`figspec.storyboard_svg(model)`, `figspec.save(model, "chart.svg")`,
+`figspec.from_matplotlib(figure)`.
 
 ## Reading the report
 

@@ -257,7 +257,7 @@ fn layout_of(figure: &Figure, plots: &[Plot]) -> Layout {
 /// makes a rendered artifact impossible to compare, hash or cache — and comparing
 /// two renders is exactly what an inspection workflow does. Renumbering by first
 /// appearance is deterministic, and the ids are internal to the document.
-fn normalized_svg(svg: String) -> String {
+pub(crate) fn normalized_svg(svg: String) -> String {
     const PREFIX: &str = "kuva-clip-";
     let mut seen: Vec<String> = Vec::new();
     let mut rest = svg.as_str();
@@ -283,17 +283,26 @@ fn normalized_svg(svg: String) -> String {
     out
 }
 
-/// The figure as an SVG document.
-pub fn to_svg(figure: &Figure) -> Result<String, RenderError> {
+/// The plots and the layout they are drawn against.
+///
+/// One function for all three consumers — the SVG, the PNG and the storyboard's
+/// boxes — so a box cannot be computed against a different layout than the one
+/// the picture was drawn with.
+pub(crate) fn geometry(figure: &Figure) -> Result<(Vec<Plot>, Layout), RenderError> {
     let plots = plots_of(figure)?;
     let layout = layout_of(figure, &plots);
+    Ok((plots, layout))
+}
+
+/// The figure as an SVG document.
+pub fn to_svg(figure: &Figure) -> Result<String, RenderError> {
+    let (plots, layout) = geometry(figure)?;
     Ok(normalized_svg(kuva::render_to_svg(plots, layout)))
 }
 
 /// The figure as a PNG.
 pub fn to_png(figure: &Figure) -> Result<Vec<u8>, RenderError> {
-    let plots = plots_of(figure)?;
-    let layout = layout_of(figure, &plots);
+    let (plots, layout) = geometry(figure)?;
     // 2.0 is the engine's retina density; it is a rendering choice, not a model
     // property, so it stays out of the model and out of the checks.
     kuva::render_to_png(plots, layout, 2.0).map_err(|error| refuse(format!("png: {error}")))

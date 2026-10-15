@@ -1,0 +1,9 @@
+{
+  "title": "Revenue, axis trimmed",
+  "x_label": "quarter",
+  "y_label": "revenue (M JPY)",
+  "y_min": 25,
+  "marks": [
+    {"kind": "bar", "categories": ["Q1", "Q2", "Q3", "Q4"], "values": [31.5, 34.2, 29.8, 41.0]}
+  ]
+}

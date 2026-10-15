@@ -1,0 +1,110 @@
+//! figspec — a figure as data.
+//!
+//! ```text
+//!   model (JSON)  ──inspect──▶  problems, with stable codes
+//!        │
+//!        └──render──▶  SVG / PNG, by kuva (MIT)
+//! ```
+//!
+//! The model is plain data, so it can be written by a person, emitted by an
+//! agent, or converted from an existing matplotlib figure — and inspected
+//! without rendering it and without executing anything.
+//!
+//! The string-in/string-out entry points ([`render_svg`], [`inspect_json`]) are
+//! the boundary the Python bindings and the CLI share, so both see exactly the
+//! same behaviour.
+
+pub mod inspect;
+pub mod model;
+pub mod render;
+
+pub use inspect::{inspect, Report, ERROR, INFO, WARN};
+pub use model::{Figure, Mark, ModelError, Scale};
+pub use render::{to_png, to_svg, RenderError};
+
+/// Render a figure given as JSON to SVG.
+pub fn render_svg(model_json: &str) -> Result<String, String> {
+    let figure = Figure::from_json(model_json, "(model)").map_err(|error| error.to_string())?;
+    to_svg(&figure).map_err(|error| error.to_string())
+}
+
+/// Render a figure given as JSON to PNG.
+pub fn render_png(model_json: &str) -> Result<Vec<u8>, String> {
+    let figure = Figure::from_json(model_json, "(model)").map_err(|error| error.to_string())?;
+    to_png(&figure).map_err(|error| error.to_string())
+}
+
+/// Inspect a figure given as JSON, returning the report as JSON.
+pub fn inspect_json(model_json: &str) -> Result<String, String> {
+    let figure = Figure::from_json(model_json, "(model)").map_err(|error| error.to_string())?;
+    Ok(inspect(&figure).to_json())
+}
+
+/// Every problem code, its severity and what it means: the codebook a caller
+/// branches on. Kept here so the documentation cannot drift from the checks.
+pub const CODEBOOK: &[(&str, &str, &str)] = &[
+    (
+        "empty-figure",
+        ERROR,
+        "the figure declares no marks, so there is nothing to read",
+    ),
+    (
+        "non-finite-value",
+        ERROR,
+        "a coordinate is NaN or infinite and cannot be placed",
+    ),
+    (
+        "mismatched-lengths",
+        ERROR,
+        "a bar mark's categories and values disagree in number",
+    ),
+    (
+        "truncated-baseline",
+        ERROR,
+        "bars start above zero, so their lengths no longer mean their values",
+    ),
+    (
+        "non-positive-on-log-scale",
+        ERROR,
+        "a log axis is asked to place zero or a negative value",
+    ),
+    (
+        "no-title",
+        WARN,
+        "the figure has no title, so a reader cannot tell what it shows",
+    ),
+    ("no-axis-label", INFO, "an axis has no label"),
+];
+
+#[cfg(feature = "python")]
+mod python {
+    use pyo3::exceptions::PyValueError;
+    use pyo3::prelude::*;
+
+    #[pyfunction]
+    fn render_svg(model_json: &str) -> PyResult<String> {
+        super::render_svg(model_json).map_err(PyValueError::new_err)
+    }
+
+    #[pyfunction]
+    fn render_png(model_json: &str) -> PyResult<Vec<u8>> {
+        super::render_png(model_json).map_err(PyValueError::new_err)
+    }
+
+    #[pyfunction]
+    fn inspect_json(model_json: &str) -> PyResult<String> {
+        super::inspect_json(model_json).map_err(PyValueError::new_err)
+    }
+
+    /// figspec's compiled half. The Python package in `python/figspec` is the
+    /// public surface; this module only carries the model across the boundary as
+    /// JSON, so both languages see the same checks and the same rendering.
+    #[pymodule]
+    fn _figspec(module: &Bound<'_, PyModule>) -> PyResult<()> {
+        module.add_function(wrap_pyfunction!(render_svg, module)?)?;
+        module.add_function(wrap_pyfunction!(render_png, module)?)?;
+        module.add_function(wrap_pyfunction!(inspect_json, module)?)?;
+        module.add("__doc__", "figspec's compiled extension")?;
+        Ok(())
+    }
+}

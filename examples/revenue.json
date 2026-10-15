@@ -1,0 +1,9 @@
+{
+  "title": "Quarterly revenue",
+  "x_label": "quarter",
+  "y_label": "revenue (M JPY)",
+  "marks": [
+    {"kind": "bar", "categories": ["Q1", "Q2", "Q3", "Q4"], "values": [31.5, 34.2, 29.8, 41.0], "color": "steelblue"},
+    {"kind": "line", "points": [[0, 31.5], [1, 34.2], [2, 29.8], [3, 41.0]], "color": "darkorange", "label": "trend"}
+  ]
+}

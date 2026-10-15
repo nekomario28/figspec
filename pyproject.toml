@@ -1,0 +1,33 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "figspec"
+version = "0.1.0"
+description = "A figure as data: declare it, render it with Rust, inspect the same model."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+keywords = ["plotting", "charts", "inspection", "svg", "matplotlib"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.urls]
+Homepage = "https://github.com/nekomario28/figspec"
+Issues = "https://github.com/nekomario28/figspec/issues"
+
+# matplotlib is deliberately NOT a runtime dependency: it is only needed by
+# `from_matplotlib`, and the renderer never imports it.
+[project.optional-dependencies]
+matplotlib = ["matplotlib>=3.7"]
+test = ["pytest>=7", "matplotlib>=3.7"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "figspec._figspec"
+features = ["python"]

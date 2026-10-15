@@ -1,0 +1,13 @@
+# figspec
+
+figspec turns a chart into data: a JSON model of marks, axes and labels, rendered
+by a Rust engine (kuva) and checked by stable codes — without matplotlib in the
+renderer, and without executing anything to inspect it.
+
+- Install: pip install figspec (or, before the first release, maturin develop --release in a checkout)
+- Write a model: {"title": ..., "x_label": ..., "y_label": ..., "marks": [{"kind": "bar", "categories": [...], "values": [...]}, {"kind": "line", "points": [[x, y], ...]}, {"kind": "scatter", "points": [[x, y], ...]}], "x_scale": "linear|log", "y_scale": "linear|log", "y_min": number, "width": px, "height": px}
+- figspec inspect model.json — problems, no rendering; exit 1 on any error
+- figspec render model.json -o chart.svg|chart.png
+- Python: figspec.inspect(model), figspec.render_svg(model), figspec.render_png(model), figspec.save(model, path), figspec.from_matplotlib(figure)
+- Codes: truncated-baseline (error), mismatched-lengths (error), non-finite-value (error), non-positive-on-log-scale (error), empty-figure (error), no-title (warn), no-axis-label (info)
+- Unknown fields are refused, not ignored. matplotlib is an optional importer, never a dependency. The drawing is kuva's (MIT); figspec owns the model and the checks.

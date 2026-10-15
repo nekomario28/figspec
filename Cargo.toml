@@ -1,0 +1,41 @@
+[package]
+name = "figspec"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+description = "A figure as data: declare it, render it with Rust, inspect the same model."
+license = "MIT"
+repository = "https://github.com/nekomario28/figspec"
+readme = "README.md"
+keywords = ["plotting", "charts", "inspection", "svg", "visualization"]
+categories = ["visualization", "science"]
+
+[lib]
+name = "figspec"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "figspec"
+path = "src/bin/figspec.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The renderer is not this crate's job: kuva is a mature, MIT-licensed Rust
+# plotting engine (68 plot types, SVG/PNG/PDF). This crate owns the *model* that
+# can be inspected, serialized and produced by a converter, and maps it onto that
+# engine. Reuse beats reimplementation here.
+kuva = { version = "0.6", features = ["png"] }
+
+[dependencies.pyo3]
+version = "0.30"
+features = ["extension-module", "abi3-py39"]
+optional = true
+
+[features]
+default = []
+python = ["dep:pyo3"]
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -103,15 +103,17 @@ def _figsize(figure: Any) -> dict[str, int]:
     return {"width": int(round(float(width) * dpi)), "height": int(round(float(height) * dpi))}
 
 
-def _title(figure: Any) -> str | None:
+def _title(figure: Any, axes: Any) -> str | None:
+    """The title of the axes being converted, or the figure's suptitle.
+
+    Reading the *first* axes' title was wrong for any figure with several: the
+    model would carry a title from a chart it does not describe.
+    """
     text = getattr(figure, "_suptitle", None)
     if text is not None and getattr(text, "get_text", lambda: "")():
         return str(text.get_text())
-    for axes in getattr(figure, "axes", []):
-        label = axes.get_title()
-        if label:
-            return str(label)
-    return None
+    label = axes.get_title()
+    return str(label) if label else None
 
 
 def _axis_labels(axes: Any) -> dict[str, str | None]:
@@ -130,49 +132,197 @@ def _points(line: Any) -> list[list[float]]:
     return [[float(x), float(y)] for x, y in data]
 
 
+def _error_bars(axes: Any) -> tuple[dict[int, dict[str, Any]], set[int]]:
+    """Recover error bars, and the collections that carry them.
+
+    Returns `{id(data_line): {"y_err": [...]}}` plus the ids of the collections
+    that belong to an error bar, so the unsupported scan does not report them as
+    unknown artists. matplotlib stores the magnitudes inside a `LineCollection`
+    of vertical segments, so they are recovered from the segments rather than
+    from the argument the caller passed.
+    """
+    errors: dict[int, dict[str, Any]] = {}
+    accounted: set[int] = set()
+    for container in getattr(axes, "containers", []):
+        if type(container).__name__ != "ErrorbarContainer":
+            continue
+        data_line = container.lines[0]
+        yerr = container[2] if len(container) > 2 else None
+        magnitudes = yerr[0] if isinstance(yerr, tuple) and yerr else yerr
+        if magnitudes is None:
+            continue
+        accounted.add(id(magnitudes))
+        centres = [float(y) for _, y in data_line.get_xydata()]
+        symmetric: list[float] = []
+        asymmetric: list[list[float]] = []
+        for position, segment in enumerate(magnitudes.get_segments()):
+            if len(segment) < 2 or position >= len(centres):
+                continue
+            lower = centres[position] - float(segment[0][1])
+            upper = float(segment[1][1]) - centres[position]
+            symmetric.append((lower + upper) / 2.0)
+            asymmetric.append([lower, upper])
+        if not symmetric:
+            continue
+        if all(abs(low - high) < 1e-9 for low, high in asymmetric):
+            errors[id(data_line)] = {"y_err": symmetric}
+        else:
+            errors[id(data_line)] = {"y_err_asymmetric": asymmetric}
+    return errors, accounted
+
+
+def _bar_marks(axes: Any) -> list[dict[str, Any]]:
+    """Bars, as one mark or as a group of series, from matplotlib's containers.
+
+    A `BarContainer` is one `axes.bar` call, so it is one series; series in a
+    group are the same call with an x offset, which makes patch *i* of every
+    container the *i*-th category. That is the convention this follows, and the
+    positions are checked against it rather than assumed — two separate bar
+    charts on one axes look like a group to a naive reader and are refused.
+
+    A stack (`bottom=` set) is a different chart the model cannot hold, and bars
+    that do not sit on tick labels have no category names, so both are refused
+    rather than drawn as something else.
+    """
+    containers = [
+        container
+        for container in getattr(axes, "containers", [])
+        if type(container).__name__ == "BarContainer"
+    ]
+    containers = [container for container in containers if list(container.patches)]
+    if not containers:
+        return []
+
+    widths = {
+        float(getattr(list(container.patches)[0], "get_width", lambda: 1.0)())
+        for container in containers
+    }
+    lengths = {len(container.patches) for container in containers}
+    if len(lengths) != 1:
+        raise ValueError(
+            "figspec cannot represent bar groups with a different number of bars "
+            "in each group"
+        )
+    if len(widths) != 1:
+        raise ValueError("figspec cannot represent bar groups whose bars differ in width")
+    width = widths.pop()
+    per_group = lengths.pop()
+
+    for container in containers:
+        if any(abs(float(patch.get_y())) > 1e-9 for patch in container.patches):
+            raise ValueError(
+                "figspec cannot represent a stacked bar chart; it draws grouped "
+                "bars. Refusing rather than converting part of the figure"
+            )
+
+    labels: list[str | None] = []
+    colors: list[str | None] = []
+    for container in containers:
+        label = str(container.get_label() or "")
+        labels.append(label if label and not label.startswith("_") else None)
+        colors.append(_color(list(container.patches)[0].get_facecolor()))
+
+    categories: list[str] = []
+    values: list[list[float]] = [[] for _ in containers]
+    for position in range(per_group):
+        group = [list(container.patches)[position] for container in containers]
+        centres = [float(patch.get_x()) + width / 2.0 for patch in group]
+        if max(centres) - min(centres) > width * 1.5:
+            raise ValueError(
+                "figspec cannot represent bars that are not side by side as one "
+                "group; refusing rather than pairing unrelated bars"
+            )
+        category, found = _category_at(axes, sum(centres) / len(centres), limit=width)
+        if not found:
+            raise ValueError(
+                "figspec cannot represent bars that do not sit on tick labels; the "
+                "model's bars are categorical. Refusing rather than inventing "
+                "category names"
+            )
+        categories.append(category)
+        for index, patch in enumerate(group):
+            values[index].append(float(patch.get_height()))
+
+    if len(containers) == 1:
+        return [
+            {
+                "kind": "bar",
+                "categories": categories,
+                "values": values[0],
+                "color": colors[0],
+                "label": labels[0],
+            }
+        ]
+    return [
+        {
+            "kind": "grouped_bar",
+            "categories": categories,
+            "series": [
+                {"values": values[index], "label": labels[index], "color": colors[index]}
+                for index in range(len(containers))
+            ],
+        }
+    ]
+
+
 def _marks(axes: Any) -> list[dict[str, Any]]:
     """The marks of one axes, in the order matplotlib draws them.
 
     Only what the model can represent is converted. A mark kind it cannot hold
-    (an image, a contour set, a 3-D projection) is **refused**, not skipped: a
-    converted figure that silently omits half the chart is worse than no
-    conversion, because it looks complete.
+    (an image, a contour set, a 3-D projection, a stacked bar) is **refused**, not
+    skipped: a converted figure that silently omits half the chart is worse than
+    no conversion, because it looks complete.
     """
+    errors, accounted = _error_bars(axes)
     marks: list[dict[str, Any]] = []
     unsupported: list[str] = []
 
     for line in axes.get_lines():
-        marks.append(
-            {
-                "kind": "line",
-                "points": _points(line),
-                "color": _color(line.get_color()),
-                "label": line.get_label() if not str(line.get_label()).startswith("_") else None,
-            }
-        )
+        mark: dict[str, Any] = {
+            "kind": "line",
+            "points": _points(line),
+            "color": _color(line.get_color()),
+            "label": line.get_label() if not str(line.get_label()).startswith("_") else None,
+            **errors.get(id(line), {}),
+        }
+        marks.append(mark)
+
+    for collection in getattr(axes, "collections", []):
+        if id(collection) in accounted:
+            continue
+        name = type(collection).__name__
+        if name == "PathCollection":
+            # A scatter: the offsets are the points, the colour is one value.
+            marks.append(
+                {
+                    "kind": "scatter",
+                    "points": [
+                        [float(x), float(y)] for x, y in collection.get_offsets().tolist()
+                    ],
+                    "color": _color(collection.get_facecolor()),
+                    "label": (
+                        str(collection.get_label())
+                        if not str(collection.get_label()).startswith("_")
+                        else None
+                    ),
+                }
+            )
+            continue
+        unsupported.append(name)
+
+    marks.extend(_bar_marks(axes))
 
     for patch in axes.patches:
+        # A rectangle that is not part of a bar container is an annotation with a
+        # size, which this model has no mark for.
         name = type(patch).__name__
         if name not in {"Rectangle", "FancyBboxPatch"}:
             unsupported.append(name)
-            continue
-        height = float(getattr(patch, "get_height", lambda: 0.0)())
-        width = float(getattr(patch, "get_width", lambda: 0.0)())
-        # A bar is a rectangle on a categorical axis; matplotlib gives it an x
-        # position and a width, and the category labels live on the ticks.
-        if width <= 0.0:
-            unsupported.append(name)
-            continue
-        category = _category_at(axes, float(patch.get_x()) + width / 2.0)
-        marks.append({"kind": "bar", "categories": [category], "values": [height], "color": _color(patch.get_facecolor())})
 
-    # Everything else an axes can hold is outside the model. `images` is the one
-    # that bites: `imshow` puts its picture there, not in `patches` or
-    # `collections`, so a converter that only looked at those would report a
-    # figure with no marks as complete. `containers` is deliberately not scanned:
-    # a `BarContainer` groups the rectangles that `patches` already carries, so
-    # flagging it would refuse every bar chart.
-    for attribute in ("collections", "images", "tables", "texts"):
+    # `images` is the one that bites: `imshow` puts its picture there, not in
+    # `patches` or `collections`, so a converter that only looked at those would
+    # report a figure with no marks as complete.
+    for attribute in ("images", "tables", "texts"):
         for artist in getattr(axes, attribute, []):
             unsupported.append(type(artist).__name__)
 
@@ -180,39 +330,27 @@ def _marks(axes: Any) -> list[dict[str, Any]]:
         raise ValueError(
             "figspec cannot represent "
             + ", ".join(sorted(set(unsupported)))
-            + "; it converts lines and bars. Refusing rather than converting part of the figure"
+            + "; it converts lines, scatter, bars and grouped bars, with error "
+            "bars. Refusing rather than converting part of the figure"
         )
-    if len([mark for mark in marks if mark["kind"] == "bar"]) > 1:
-        # One bar mark carries the whole series, so merge the rectangles that share
-        # a colour and are adjacent on the tick axis.
-        marks = _merge_bars(marks)
     return marks
 
 
-def _category_at(axes: Any, position: float) -> str:
+def _category_at(axes: Any, position: float, *, limit: float = 0.51) -> tuple[str, bool]:
+    """The tick label at ``position``, and whether there was one.
+
+    The second element is what lets a caller refuse rather than invent a name: a
+    bar that sits between ticks has no category, and calling it "0.2" would be a
+    label the figure never had.
+    """
     ticks = [float(value) for value in axes.get_xticks()]
     labels = [str(text.get_text()) for text in axes.get_xticklabels()]
     if not ticks:
-        return f"{position:g}"
+        return f"{position:g}", False
     nearest = min(range(len(ticks)), key=lambda index: abs(ticks[index] - position))
-    if abs(ticks[nearest] - position) < 0.51 and nearest < len(labels) and labels[nearest]:
-        return labels[nearest]
-    return f"{position:g}"
-
-
-def _merge_bars(marks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    bars = [mark for mark in marks if mark["kind"] == "bar"]
-    first = bars[0]
-    merged = {
-        "kind": "bar",
-        "categories": [category for mark in bars for category in mark["categories"]],
-        "values": [value for mark in bars for value in mark["values"]],
-        "color": first.get("color"),
-        "label": None,
-    }
-    out = [mark for mark in marks if mark["kind"] != "bar"]
-    out.append(merged)
-    return out
+    if abs(ticks[nearest] - position) <= limit and nearest < len(labels) and labels[nearest]:
+        return labels[nearest], True
+    return f"{position:g}", False
 
 
 def from_matplotlib(figure: Any, *, axes_index: int = 0) -> Model:
@@ -236,7 +374,7 @@ def from_matplotlib(figure: Any, *, axes_index: int = 0) -> Model:
     model: Model = Model(
         {
             "marks": _marks(axes),
-            "title": _title(figure),
+            "title": _title(figure, axes),
             **_axis_labels(axes),
             "x_scale": _scale(axes, "x"),
             "y_scale": _scale(axes, "y"),

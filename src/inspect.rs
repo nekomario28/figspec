@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Figure, Mark, Scale};
+use crate::model::Figure;
 
 /// `error` is the only severity that fails a build.
 pub const ERROR: &str = "error";
@@ -59,66 +59,36 @@ fn problem(code: &str, severity: &str, message: String, mark: Option<usize>) -> 
 }
 
 /// Inspect a figure.
+///
+/// Two kinds of finding, and the difference matters:
+///
+/// * the model's own **refusals** — shapes that cannot be drawn as written, which
+///   the renderer refuses from the same list;
+/// * **judgement** — a figure that draws fine while being misleading, such as bars
+///   that start above zero. Rendering it is how a reader sees the problem.
 pub fn inspect(figure: &Figure) -> Report {
-    let mut problems = Vec::new();
+    let mut problems: Vec<Problem> = figure
+        .refusals()
+        .into_iter()
+        .map(|refusal| problem(refusal.code, ERROR, refusal.message, refusal.mark))
+        .collect();
 
-    if figure.marks.is_empty() {
-        problems.push(problem(
-            "empty-figure",
-            ERROR,
-            "the figure declares no marks, so there is nothing to read".to_string(),
-            None,
-        ));
-    }
-
-    for (index, mark) in figure.marks.iter().enumerate() {
-        let values = mark.values();
-        if let Some(bad) = values.iter().find(|value| !value.is_finite()) {
-            problems.push(problem(
-                "non-finite-value",
-                ERROR,
-                format!("{} mark draws {bad}, which cannot be placed", mark.kind()),
-                Some(index),
-            ));
-        }
-
-        if let Mark::Bar {
-            categories, values, ..
-        } = mark
-        {
-            if categories.len() != values.len() {
+    if let Some(categories) = figure.marks.iter().find_map(|mark| mark.categories()) {
+        let _ = categories;
+        if let Some(min) = figure.y_min {
+            // A bar's length is the value. Trimming the axis trims the length.
+            if min > 0.0 {
+                let mark = figure
+                    .marks
+                    .iter()
+                    .position(|candidate| candidate.categories().is_some());
                 problems.push(problem(
-                    "mismatched-lengths",
-                    ERROR,
-                    format!(
-                        "bar mark has {} categories but {} values",
-                        categories.len(),
-                        values.len()
-                    ),
-                    Some(index),
-                ));
-            }
-            match figure.y_min {
-                // A bar's length is the value. Trimming the axis trims the length.
-                Some(min) if min > 0.0 => problems.push(problem(
                     "truncated-baseline",
                     ERROR,
                     format!(
                         "bars start at y={min}, not 0, so their lengths no longer mean their values"
                     ),
-                    Some(index),
-                )),
-                _ => {}
-            }
-        }
-
-        if matches!(figure.x_scale, Scale::Log) || matches!(figure.y_scale, Scale::Log) {
-            if let Some(bad) = values.iter().find(|value| **value <= 0.0) {
-                problems.push(problem(
-                    "non-positive-on-log-scale",
-                    ERROR,
-                    format!("a log axis cannot place {bad}"),
-                    Some(index),
+                    mark,
                 ));
             }
         }

@@ -16,8 +16,36 @@ fn bars(values: Vec<f64>) -> Mark {
 fn line(points: Vec<[f64; 2]>) -> Mark {
     Mark::Line {
         points,
+        y_err: None,
+        y_err_asymmetric: None,
         color: None,
         label: None,
+    }
+}
+
+fn scatter(points: Vec<[f64; 2]>, y_err: Option<Vec<f64>>) -> Mark {
+    Mark::Scatter {
+        points,
+        y_err,
+        y_err_asymmetric: None,
+        size: None,
+        color: None,
+        label: None,
+    }
+}
+
+fn grouped(categories: Vec<&str>, series: Vec<Vec<f64>>) -> Mark {
+    Mark::GroupedBar {
+        categories: categories.into_iter().map(String::from).collect(),
+        series: series
+            .into_iter()
+            .enumerate()
+            .map(|(index, values)| figspec::model::Series {
+                values,
+                label: Some(format!("s{index}")),
+                color: None,
+            })
+            .collect(),
     }
 }
 
@@ -168,6 +196,94 @@ fn rendering_refuses_what_it_cannot_draw_instead_of_approximating() {
 }
 
 #[test]
+fn error_bars_render_and_are_checked_for_length() {
+    let figure = Figure::new()
+        .with_title("with errors")
+        .with_labels("x", "y (M)")
+        .with_mark(scatter(vec![[0.0, 1.0], [1.0, 2.0]], Some(vec![0.1, 0.2])));
+    assert_eq!(inspect(&figure).problems, vec![]);
+    assert!(to_svg(&figure).unwrap().contains("<svg"));
+
+    // One magnitude short: a point would silently lose its error bar.
+    let short = Figure::new()
+        .with_title("short")
+        .with_mark(scatter(vec![[0.0, 1.0], [1.0, 2.0]], Some(vec![0.1])));
+    let problems = inspect(&short).problems;
+    assert_eq!(problems[0].code, "mismatched-lengths");
+    assert!(
+        problems[0].message.contains("2 points"),
+        "{}",
+        problems[0].message
+    );
+    assert!(to_svg(&short).is_err(), "rendering must refuse it too");
+}
+
+#[test]
+fn a_negative_error_magnitude_is_an_error() {
+    let figure = Figure::new()
+        .with_title("negative")
+        .with_mark(scatter(vec![[0.0, 1.0]], Some(vec![-0.5])));
+    assert_eq!(inspect(&figure).problems[0].code, "negative-error");
+}
+
+#[test]
+fn declaring_both_error_shapes_is_refused_once() {
+    let figure = Figure::new()
+        .with_title("both")
+        .with_labels("x", "y")
+        .with_mark(Mark::Line {
+            points: vec![[0.0, 1.0], [1.0, 2.0]],
+            y_err: Some(vec![0.1, 0.1]),
+            y_err_asymmetric: Some(vec![[0.1, 0.2], [0.1, 0.2]]),
+            color: None,
+            label: None,
+        });
+    let report = inspect(&figure);
+    let codes: Vec<&str> = report
+        .problems
+        .iter()
+        .map(|problem| problem.code.as_str())
+        .collect();
+    assert_eq!(codes, vec!["two-error-shapes"]);
+    assert!(to_svg(&figure).is_err());
+}
+
+#[test]
+fn a_grouped_bar_needs_one_value_per_category_in_every_series() {
+    let ok = Figure::new()
+        .with_title("grouped")
+        .with_labels("quarter", "revenue (M)")
+        .with_mark(grouped(
+            vec!["Q1", "Q2"],
+            vec![vec![1.0, 2.0], vec![3.0, 4.0]],
+        ));
+    assert_eq!(inspect(&ok).problems, vec![]);
+    assert!(to_svg(&ok).unwrap().contains("<svg"));
+
+    let bad = Figure::new()
+        .with_title("grouped")
+        .with_mark(grouped(vec!["Q1", "Q2"], vec![vec![1.0, 2.0], vec![3.0]]));
+    let problems = inspect(&bad).problems;
+    assert_eq!(problems[0].code, "mismatched-lengths");
+    assert!(
+        problems[0].message.contains("series 1"),
+        "{}",
+        problems[0].message
+    );
+    assert!(to_svg(&bad).is_err());
+}
+
+#[test]
+fn a_grouped_bar_with_a_truncated_baseline_is_caught_too() {
+    let mut figure = Figure::new().with_title("grouped").with_mark(grouped(
+        vec!["Q1", "Q2"],
+        vec![vec![31.0, 41.0], vec![29.0, 33.0]],
+    ));
+    figure.y_min = Some(25.0);
+    assert_eq!(inspect(&figure).problems[0].code, "truncated-baseline");
+}
+
+#[test]
 fn the_codebook_names_every_code_the_checks_emit() {
     // The codebook is what a caller branches on, so it cannot drift from the
     // checks. Every code below is constructed above.
@@ -177,6 +293,8 @@ fn the_codebook_names_every_code_the_checks_emit() {
         "mismatched-lengths",
         "truncated-baseline",
         "non-positive-on-log-scale",
+        "two-error-shapes",
+        "negative-error",
         "no-title",
         "no-axis-label",
     ];
@@ -243,4 +361,29 @@ fn the_command_line_keeps_the_exit_policy() {
     assert!(run(&ok).status.success());
     assert_eq!(run(&bad).status.code(), Some(1));
     assert_eq!(run(&broken).status.code(), Some(2));
+}
+
+#[test]
+fn the_axis_covers_the_error_bars_it_draws() {
+    // The engine sizes axes from the data; an error bar reaching past the last
+    // value would be clipped, which is a picture that disagrees with the numbers.
+    let figure = Figure::new()
+        .with_title("errors")
+        .with_labels("x", "y")
+        .with_mark(scatter(
+            vec![[0.0, 10.0], [1.0, 12.0]],
+            Some(vec![1.0, 3.0]),
+        ));
+    let svg = to_svg(&figure).unwrap();
+    // 12.0 + 3.0 = 15 must be inside the drawn range: the top tick is at or above it.
+    let tops: Vec<f64> = svg
+        .split("text-anchor=\"end\">")
+        .filter_map(|chunk| chunk.split('<').next())
+        .filter_map(|text| text.trim().parse::<f64>().ok())
+        .collect();
+    let highest = tops.iter().cloned().fold(f64::MIN, f64::max);
+    assert!(
+        highest >= 15.0,
+        "the axis stops at {highest}, below the error bar"
+    );
 }

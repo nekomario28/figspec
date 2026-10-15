@@ -92,3 +92,88 @@ def test_from_matplotlib_refuses_what_it_cannot_represent():
     axes.imshow([[1.0, 0.0], [0.0, 1.0]])
     with pytest.raises(ValueError, match="cannot represent"):
         figspec.from_matplotlib(figure)
+
+
+def _axes():
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt.subplots()
+
+
+def test_from_matplotlib_converts_a_scatter():
+    figure, axes = _axes()
+    axes.scatter([1.0, 2.0, 3.0], [4.0, 5.0, 6.0], label="points")
+    model = figspec.from_matplotlib(figure)
+    assert [mark["kind"] for mark in model["marks"]] == ["scatter"]
+    assert model["marks"][0]["points"] == [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]
+    assert model["marks"][0]["label"] == "points"
+    assert figspec.inspect(model | {"title": "t", "x_label": "x", "y_label": "y"}) == []
+
+
+def test_from_matplotlib_carries_symmetric_error_bars():
+    figure, axes = _axes()
+    axes.errorbar([1.0, 2.0], [4.0, 5.0], yerr=[0.1, 0.2])
+    model = figspec.from_matplotlib(figure)
+    mark = model["marks"][0]
+    assert mark["kind"] == "line"
+    assert mark["y_err"] == pytest.approx([0.1, 0.2])
+    assert "y_err_asymmetric" not in mark
+
+
+def test_from_matplotlib_carries_asymmetric_error_bars():
+    figure, axes = _axes()
+    axes.errorbar([1.0, 2.0], [4.0, 5.0], yerr=[[0.1, 0.2], [0.3, 0.4]])
+    model = figspec.from_matplotlib(figure)
+    mark = model["marks"][0]
+    assert "y_err" not in mark
+    # One [lower, upper] pair per point, recovered from matplotlib's segments.
+    pairs = mark["y_err_asymmetric"]
+    assert len(pairs) == 2
+    for pair, expected in zip(pairs, [[0.1, 0.3], [0.2, 0.4]]):
+        assert pair == pytest.approx(expected)
+    # Asymmetric bars render, and the model is checkable.
+    assert figspec.render_svg(model).startswith("<svg")
+
+
+def test_from_matplotlib_converts_grouped_bars():
+    figure, axes = _axes()
+    axes.set_xticks([0, 1], labels=["Q1", "Q2"])
+    axes.bar([0.0, 1.0], [1.0, 2.0], width=0.4, label="A")
+    axes.bar([0.4, 1.4], [3.0, 4.0], width=0.4, label="B")
+    model = figspec.from_matplotlib(figure)
+    assert [mark["kind"] for mark in model["marks"]] == ["grouped_bar"]
+    mark = model["marks"][0]
+    assert mark["categories"] == ["Q1", "Q2"]
+    assert [series["label"] for series in mark["series"]] == ["A", "B"]
+    assert [series["values"] for series in mark["series"]] == [[1.0, 2.0], [3.0, 4.0]]
+    # A group with one value fewer than the categories is an error, not a drawing.
+    model["marks"][0]["series"][1]["values"] = [3.0]
+    assert "mismatched-lengths" in [p["code"] for p in figspec.inspect(model)]
+    with pytest.raises(ValueError):
+        figspec.render_svg(model)
+
+
+def test_from_matplotlib_refuses_a_stacked_bar():
+    figure, axes = _axes()
+    axes.bar([0.0, 1.0], [1.0, 2.0])
+    axes.bar([0.0, 1.0], [3.0, 4.0], bottom=[1.0, 2.0])
+    with pytest.raises(ValueError, match="stacked"):
+        figspec.from_matplotlib(figure)
+
+
+def test_from_matplotlib_refuses_what_the_model_has_no_mark_for():
+    figure, axes = _axes()
+    axes.violinplot([[1.0, 2.0, 3.0]])
+    with pytest.raises(ValueError, match="cannot represent"):
+        figspec.from_matplotlib(figure)
+
+
+def test_from_matplotlib_takes_the_title_of_the_axes_it_converts():
+    figure, axes_list = _axes()
+    figure.subplots(1, 2)
+    figure.axes[0].set_title("first")
+    figure.axes[1].set_title("second")
+    assert figspec.from_matplotlib(figure, axes_index=0)["title"] == "first"
+    assert figspec.from_matplotlib(figure, axes_index=1)["title"] == "second"

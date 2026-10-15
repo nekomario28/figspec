@@ -69,6 +69,16 @@ pub const CODEBOOK: &[(&str, &str, &str)] = &[
         "a log axis is asked to place zero or a negative value",
     ),
     (
+        "two-error-shapes",
+        ERROR,
+        "a mark declares symmetric and asymmetric error bars at once",
+    ),
+    (
+        "negative-error",
+        ERROR,
+        "an error magnitude is negative, which is not a distance",
+    ),
+    (
         "no-title",
         WARN,
         "the figure has no title, so a reader cannot tell what it shows",

@@ -24,10 +24,20 @@ figspec.save(model, "revenue.svg")
   "y_label": "revenue (M JPY)",
   "marks": [
     {"kind": "bar", "categories": ["Q1", "Q2", "Q3", "Q4"],
-     "values": [31.5, 34.2, 29.8, 41.0]}
+     "values": [31.5, 34.2, 29.8, 41.0]},
+    {"kind": "line", "points": [[0, 31.5], [3, 41.0]], "label": "trend",
+     "y_err": [0.4, 0.5, 0.3, 0.6]},
+    {"kind": "scatter", "points": [[0, 30.0], [1, 33.0]]},
+    {"kind": "grouped_bar", "categories": ["Q1", "Q2"],
+     "series": [{"label": "north", "values": [31.0, 41.0]},
+                {"label": "south", "values": [29.0, 33.0]}]}
   ]
 }
 ```
+
+`y_err` is one magnitude per point, drawn both ways; `y_err_asymmetric` is
+`[lower, upper]` per point when the sides differ. Declaring both on one mark is
+refused, because one drawing cannot mean two things.
 
 ## Why the model is data
 
@@ -53,12 +63,24 @@ Few on purpose. Each one says what is wrong, where, and what to do instead.
 | code | severity | what it means |
 | --- | --- | --- |
 | `truncated-baseline` | error | bars start above zero, so their lengths no longer mean their values |
-| `mismatched-lengths` | error | a bar mark's categories and values disagree in number |
+| `mismatched-lengths` | error | a collection disagrees in number with what it annotates: a group's series, or an error array and its points |
 | `non-finite-value` | error | a coordinate is NaN or infinite and cannot be placed |
 | `non-positive-on-log-scale` | error | a log axis is asked to place zero or a negative value |
+| `two-error-shapes` | error | a mark declares symmetric and asymmetric error bars at once |
+| `negative-error` | error | an error magnitude is negative, which is not a distance |
 | `empty-figure` | error | the figure declares no marks |
 | `no-title` | warn | the figure has no title, so a reader cannot tell what it shows |
 | `no-axis-label` | info | an axis has no label |
+
+Two kinds of finding, and the difference is deliberate:
+
+- **Refusals** — shapes that cannot be drawn as written. The checks report these
+  and the renderer refuses them *from the same list*, so a rule cannot hold in one
+  and be ignored by the other. (Measured while writing it: a short error array was
+  reported by `inspect` and rendered anyway, silently without that point's bar.)
+- **Judgement** — a figure that draws fine while being misleading, such as bars
+  that start above zero. Rendering it is how a reader sees the problem, so it is
+  an error, not a refusal.
 
 Exit policy, the same as the CLI's: **0** nothing to report, **1** at least one
 `error`, **2** the input could not be read. `warn` and `info` never fail a build.
@@ -81,11 +103,18 @@ matplotlib is supported as an *input*, never as a dependency of the renderer:
 model = figspec.from_matplotlib(figure)
 ```
 
-That converts lines and bars, carries the y limits across (which is where a
-truncated baseline comes from), and **refuses** a figure it cannot represent —
-an image, a contour set, a 3-D projection — instead of converting part of it.
-A converted figure that silently omits half the chart is worse than no
-conversion, because it looks complete.
+That converts **lines, scatter, single and grouped bars, and symmetric or
+asymmetric error bars**, carries the y limits across (which is where a truncated
+baseline comes from), and **refuses** what it cannot represent: an image, a
+contour or violin set, a stacked bar, bars that sit between tick labels (the
+model's bars are categorical, and inventing category names would be a label the
+figure never had), or a group whose series disagree in length. A converted figure
+that silently omits half the chart is worse than no conversion, because it looks
+complete.
+
+Grouped bars follow matplotlib's own convention — one `axes.bar` call per series,
+the same x array with an offset — and the positions are *checked* against it, so
+two unrelated bar charts on one axes are refused rather than paired.
 
 `pip install figspec` needs no matplotlib; `pip install figspec[matplotlib]` adds
 it for the importer. A later release moves matplotlib into the default install so

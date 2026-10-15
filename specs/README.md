@@ -18,6 +18,25 @@ without executing anything and without importing a 30 MB dependency.
 - **Two languages, one implementation.** Python and the CLI both call the same
   Rust functions, over JSON.
 
+## The model, extended
+
+`line` and `scatter` carry `y_err` (symmetric) or `y_err_asymmetric`; `grouped_bar`
+carries one entry per series; `bar` stays the single-series shape. They are
+separate mark kinds rather than optional fields, because one series and several
+are different shapes and a field that changed the meaning would be two shapes
+pretending to be one.
+
+Three defects were found by the tests written for them, which is why the tests
+came first:
+
+- an error array one element short was **reported by the checks and rendered
+  anyway** — the renderer now refuses from the same list the checks report;
+- the axis stopped at the data maximum, so an error bar reaching 12.6 was clipped
+  by a range ending at 12.0 — and the first fix did nothing, because the engine
+  caps the padded range against the raw one, so both had to be extended;
+- `from_matplotlib` took the *first* axes' title for any axes, so a converted
+  chart could carry another chart's title.
+
 ## Slices
 
 - [x] [01 — model, checks, renderer, CLI](slices/01-core.md)

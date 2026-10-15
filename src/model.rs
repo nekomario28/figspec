@@ -32,6 +32,12 @@ pub enum Scale {
 pub enum Mark {
     Line {
         points: Vec<[f64; 2]>,
+        /// Symmetric error magnitudes: one per point, drawn both ways.
+        #[serde(default)]
+        y_err: Option<Vec<f64>>,
+        /// `[lower, upper]` per point, when the two sides differ.
+        #[serde(default)]
+        y_err_asymmetric: Option<Vec<[f64; 2]>>,
         #[serde(default)]
         color: Option<String>,
         #[serde(default)]
@@ -39,6 +45,13 @@ pub enum Mark {
     },
     Scatter {
         points: Vec<[f64; 2]>,
+        #[serde(default)]
+        y_err: Option<Vec<f64>>,
+        #[serde(default)]
+        y_err_asymmetric: Option<Vec<[f64; 2]>>,
+        /// Marker size in points. `None` lets the engine choose.
+        #[serde(default)]
+        size: Option<f64>,
         #[serde(default)]
         color: Option<String>,
         #[serde(default)]
@@ -52,10 +65,33 @@ pub enum Mark {
         #[serde(default)]
         label: Option<String>,
     },
+    /// Several series side by side, one group per category.
+    ///
+    /// Separate from `Bar` rather than an optional field on it: one series and
+    /// several are different shapes, and a mark that meant both depending on a
+    /// field's presence would be two shapes pretending to be one.
+    GroupedBar {
+        categories: Vec<String>,
+        series: Vec<Series>,
+    },
+}
+
+/// One series of a grouped bar chart.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Series {
+    pub values: Vec<f64>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 impl Mark {
-    /// Every finite number this mark draws from, for validation and scale checks.
+    /// Every number this mark draws *from*, for validation and scale checks.
+    ///
+    /// Error magnitudes are deliberately excluded: they are distances, not values
+    /// on the axis, so a log scale must not be asked to place them.
     pub fn values(&self) -> Vec<f64> {
         match self {
             Mark::Line { points, .. } | Mark::Scatter { points, .. } => points
@@ -63,6 +99,77 @@ impl Mark {
                 .flat_map(|pair| pair.iter().copied())
                 .collect(),
             Mark::Bar { values, .. } => values.clone(),
+            Mark::GroupedBar { series, .. } => series
+                .iter()
+                .flat_map(|one| one.values.iter().copied())
+                .collect(),
+        }
+    }
+
+    /// Every error magnitude this mark draws, symmetric or asymmetric.
+    pub fn errors(&self) -> Vec<f64> {
+        let (symmetric, asymmetric) = match self {
+            Mark::Line {
+                y_err,
+                y_err_asymmetric,
+                ..
+            }
+            | Mark::Scatter {
+                y_err,
+                y_err_asymmetric,
+                ..
+            } => (y_err.as_deref(), y_err_asymmetric.as_deref()),
+            _ => (None, None),
+        };
+        let mut out: Vec<f64> = symmetric.unwrap_or_default().to_vec();
+        for pair in asymmetric.unwrap_or_default() {
+            out.extend_from_slice(pair);
+        }
+        out
+    }
+
+    /// The error shape this mark declares: `(shape, points, magnitudes)`.
+    ///
+    /// `None` when the mark carries no error bars, or when it declares both
+    /// shapes — that is its own finding (`two-error-shapes`), and reporting it
+    /// twice would bury the reason.
+    pub fn error_shape(&self) -> Option<(&'static str, usize, usize)> {
+        match self {
+            Mark::Line {
+                points,
+                y_err,
+                y_err_asymmetric,
+                ..
+            }
+            | Mark::Scatter {
+                points,
+                y_err,
+                y_err_asymmetric,
+                ..
+            } => match (y_err, y_err_asymmetric) {
+                (Some(values), None) => Some(("symmetric", points.len(), values.len())),
+                (None, Some(pairs)) => Some(("asymmetric", points.len(), pairs.len())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A mark carries symmetric or asymmetric bars, never both: two shapes with
+    /// two meanings for one drawing is how a chart differs from its own data.
+    pub fn declares_two_error_shapes(&self) -> bool {
+        match self {
+            Mark::Line {
+                y_err,
+                y_err_asymmetric,
+                ..
+            }
+            | Mark::Scatter {
+                y_err,
+                y_err_asymmetric,
+                ..
+            } => y_err.is_some() && y_err_asymmetric.is_some(),
+            _ => false,
         }
     }
 
@@ -71,6 +178,25 @@ impl Mark {
             Mark::Line { .. } => "line",
             Mark::Scatter { .. } => "scatter",
             Mark::Bar { .. } => "bar",
+            Mark::GroupedBar { .. } => "grouped_bar",
+        }
+    }
+
+    /// The category labels this mark draws, when it is categorical.
+    pub fn categories(&self) -> Option<&[String]> {
+        match self {
+            Mark::Bar { categories, .. } | Mark::GroupedBar { categories, .. } => Some(categories),
+            _ => None,
+        }
+    }
+
+    /// How many bars the mark draws per category: one for `Bar`, one per series
+    /// for `GroupedBar`.
+    pub fn values_per_category(&self) -> Vec<usize> {
+        match self {
+            Mark::Bar { values, .. } => vec![values.len()],
+            Mark::GroupedBar { series, .. } => series.iter().map(|one| one.values.len()).collect(),
+            _ => vec![],
         }
     }
 }
@@ -98,6 +224,20 @@ pub struct Figure {
     pub width: Option<u32>,
     #[serde(default)]
     pub height: Option<u32>,
+}
+
+/// A fault that makes the figure impossible to draw as written.
+///
+/// One owner, two consumers: `inspect` reports these as `error`s and the renderer
+/// refuses them, so a rule cannot hold in the checks and be ignored by the
+/// renderer. (A figure that *can* be drawn while being misleading — a truncated
+/// bar baseline — is a check, not a refusal: rendering it is how you see the
+/// problem.)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Refusal {
+    pub code: &'static str,
+    pub mark: Option<usize>,
+    pub message: String,
 }
 
 /// Why a declaration could not be read.
@@ -145,6 +285,83 @@ impl Figure {
         let path = path.as_ref();
         std::fs::write(path, format!("{}\n", self.to_json()))
             .map_err(|error| at(path.display().to_string(), format!("cannot write: {error}")))
+    }
+
+    /// Everything that makes this figure impossible to draw as written.
+    pub fn refusals(&self) -> Vec<Refusal> {
+        let mut refusals = Vec::new();
+        if self.marks.is_empty() {
+            refusals.push(Refusal {
+                code: "empty-figure",
+                mark: None,
+                message: "the figure declares no marks, so there is nothing to read".to_string(),
+            });
+        }
+        let logged = matches!(self.x_scale, Scale::Log) || matches!(self.y_scale, Scale::Log);
+        for (index, mark) in self.marks.iter().enumerate() {
+            let values = mark.values();
+            if let Some(bad) = values.iter().find(|value| !value.is_finite()) {
+                refusals.push(Refusal {
+                    code: "non-finite-value",
+                    mark: Some(index),
+                    message: format!("{} mark draws {bad}, which cannot be placed", mark.kind()),
+                });
+            }
+            if logged {
+                if let Some(bad) = values.iter().find(|value| **value <= 0.0) {
+                    refusals.push(Refusal {
+                        code: "non-positive-on-log-scale",
+                        mark: Some(index),
+                        message: format!("a log axis cannot place {bad}"),
+                    });
+                }
+            }
+            if let Some((shape, points, declared)) = mark.error_shape() {
+                if points != declared {
+                    refusals.push(Refusal {
+                        code: "mismatched-lengths",
+                        mark: Some(index),
+                        message: format!(
+                            "{} mark declares {declared} {shape} error magnitudes for {points} points",
+                            mark.kind()
+                        ),
+                    });
+                }
+            }
+            if mark.declares_two_error_shapes() {
+                refusals.push(Refusal {
+                    code: "two-error-shapes",
+                    mark: Some(index),
+                    message: format!(
+                        "{} mark declares symmetric and asymmetric error bars; one drawing cannot mean both",
+                        mark.kind()
+                    ),
+                });
+            }
+            if mark.errors().iter().any(|value| *value < 0.0) {
+                refusals.push(Refusal {
+                    code: "negative-error",
+                    mark: Some(index),
+                    message: format!("{} mark has a negative error magnitude", mark.kind()),
+                });
+            }
+            if let Some(categories) = mark.categories() {
+                for (series_index, length) in mark.values_per_category().iter().enumerate() {
+                    if *length != categories.len() {
+                        refusals.push(Refusal {
+                            code: "mismatched-lengths",
+                            mark: Some(index),
+                            message: format!(
+                                "{} mark series {series_index} has {length} values for {} categories",
+                                mark.kind(),
+                                categories.len()
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+        refusals
     }
 
     /// A figure with no marks, for a caller building one up.

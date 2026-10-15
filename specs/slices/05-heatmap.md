@@ -18,6 +18,10 @@ Measured against kuva 0.6.0, as the other marks were:
 - `row_labels`/`col_labels` are axis tick labels, so they are placed on the
   `Layout` (from the mark, so a name is written in exactly one place).
 
+Its axes are categorical, so neither `truncated-baseline` nor a log-scale check
+applies: the colour is the value, and colour is not a length — asserted in
+`tests/heatmap.rs`.
+
 The box is the category span on both axes — the plot rectangle — and
 `tests/storyboard.rs` requires it to contain all six cells the engine drew.
 

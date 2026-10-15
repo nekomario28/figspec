@@ -48,7 +48,9 @@ A `heatmap` is a matrix: the value is the colour, both axes are categorical, and
 `color_map` is a closed set (`viridis` — the default — `turbo`, `inferno`,
 `magma`, `plasma`, `cividis`, `warm`, `cool`, `cubehelix`), so a typo cannot
 quietly become the default ramp. Its **row 0 is drawn at the bottom**, which is
-what a y axis means; `row_labels` is read in the same order as `values`.
+what a y axis means; `row_labels` is read in the same order as `values`. Neither a
+trimmed axis nor a log one is a finding for a heatmap, because its axes are
+categorical: the colour is the value, and colour is not a length.
 
 ## The storyboard
 

@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Rust tests
+        run: cargo test --locked
+      - name: Rust formatting and lints
+        run: |
+          cargo fmt --check
+          cargo build --locked --features python
+      - name: Python tests (the compiled extension, not a stub)
+        run: |
+          uv venv
+          uv pip install maturin pytest matplotlib
+          uv run maturin develop --release
+          uv run pytest tests_python -q
+
+  wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Build the wheel
+        run: |
+          uv venv
+          uv pip install maturin
+          uv run maturin build --release --locked -o dist
+      - name: A fresh environment installs the wheel and draws a figure
+        run: uv run python scripts/check_consumer.py --wheel-dir dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheels
+          path: dist/*.whl
+          retention-days: 7
+
+  # A wheel built on a modern runner carries `linux_x86_64`, which PyPI refuses.
+  # Uploadable wheels need the manylinux policy, which needs the manylinux
+  # container: locally the error is explicit —
+  #   "not manylinux_2_28 compliant ... GLIBC_2.29, GLIBC_2.43"
+  # — so the release build runs here, where the container supplies the old glibc.
+  manylinux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
+        with:
+          command: build
+          args: --release --locked --out dist
+          manylinux: auto
+          target: ${{ matrix.target }}
+      - run: python3 -c "import pathlib; [print(p.name) for p in pathlib.Path('dist').glob('*.whl')]"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: manylinux-${{ matrix.target }}
+          path: dist/*.whl
+          retention-days: 7

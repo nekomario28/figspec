@@ -88,7 +88,10 @@ A converted figure that silently omits half the chart is worse than no
 conversion, because it looks complete.
 
 `pip install figspec` needs no matplotlib; `pip install figspec[matplotlib]` adds
-it for the importer.
+it for the importer. A later release moves matplotlib into the default install so
+the importer works out of the box — under one condition, recorded in
+[`specs/slices/03-release.md`](specs/slices/03-release.md): importing figspec must
+stay numpy-free, so the renderer and the checks keep working without it.
 
 ## What this is not
 

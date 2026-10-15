@@ -41,3 +41,13 @@ without executing anything and without importing a 30 MB dependency.
 
 A matplotlib-compatible API, a new renderer, 3-D, or interactive output. The
 engine's text and layout are kuva's, and its gaps are kuva's.
+
+## A possible integration, recorded rather than assumed
+
+The sibling project `gxkit` checks artifacts, and its `chartgx` tool currently
+executes a matplotlib script and reads the resulting `Figure` — so checking a
+chart means running the chart's code. With a figure as data, the same check reads
+a model instead: `inspect` needs neither matplotlib nor the artifact's execution,
+and a converted matplotlib figure and a hand-written model are checkable by one
+implementation. That is a reason this project exists; it is not a commitment
+about when `chartgx` changes, and nothing here depends on it.

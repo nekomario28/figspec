@@ -361,7 +361,9 @@ impl Figure {
                     message: format!("{} mark draws {bad}, which cannot be placed", mark.kind()),
                 });
             }
-            if logged {
+            // A heatmap's axes are categorical: the value is the colour, so a log
+            // scale says nothing about where a cell goes and cannot be applied.
+            if logged && !matches!(mark, Mark::Heatmap { .. }) {
                 if let Some(bad) = values.iter().find(|value| **value <= 0.0) {
                     refusals.push(Refusal {
                         code: "non-positive-on-log-scale",

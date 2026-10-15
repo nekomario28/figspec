@@ -118,4 +118,10 @@ fn a_heatmap_has_no_bar_semantics() {
     figure.y_min = Some(1.0);
     assert!(codes(&figure).is_empty(), "{:?}", codes(&figure));
     assert!(to_svg(&figure).is_ok());
+
+    // Colour is not a length, and it is not on the axis either: neither a
+    // trimmed axis nor a log one says anything about where a cell goes.
+    let mut logged = heat(vec![vec![0.0, 2.0]]);
+    logged.y_scale = figspec::model::Scale::Log;
+    assert!(codes(&logged).is_empty(), "{:?}", codes(&logged));
 }

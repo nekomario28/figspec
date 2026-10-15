@@ -361,8 +361,10 @@ impl Figure {
                     message: format!("{} mark draws {bad}, which cannot be placed", mark.kind()),
                 });
             }
-            // A heatmap's axes are categorical: the value is the colour, so a log
-            // scale says nothing about where a cell goes and cannot be applied.
+            // A heatmap's cells are not values on the axis: the colour is the
+            // value, so a non-positive cell is not a log-axis problem. (A log
+            // *scale* on a heatmap figure is refused above, because the engine
+            // would apply it to the cells' positions.)
             if logged && !matches!(mark, Mark::Heatmap { .. }) {
                 if let Some(bad) = values.iter().find(|value| **value <= 0.0) {
                     refusals.push(Refusal {
@@ -480,6 +482,27 @@ impl Figure {
                             ),
                         });
                     }
+                }
+            }
+        }
+        // A heatmap's rows *are* its y axis, so where the axis starts and whether
+        // it is logarithmic do not mean anything for it — but they are not inert
+        // either: measured, `y_min` stretches the cells (3 rows: 148.5 px each at
+        // `y_min` 0.5, 178.2 at 1.0, 445.5 at 2.5, pushing the last row past the
+        // canvas) and a log scale changes them (106.3 px). Drawing it anyway would
+        // be a picture that follows an instruction it cannot honour, so it is
+        // refused with the reason.
+        if self.y_min.is_some() || matches!(self.y_scale, Scale::Log) {
+            for (index, mark) in self.marks.iter().enumerate() {
+                if matches!(mark, Mark::Heatmap { .. }) {
+                    refusals.push(Refusal {
+                        code: "inapplicable-axis-setting",
+                        mark: Some(index),
+                        message: "a heatmap's rows are its y axis, so `y_min` and a log \
+                                  scale cannot apply to it"
+                            .to_string(),
+                    });
+                    break;
                 }
             }
         }

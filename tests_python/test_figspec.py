@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -88,10 +89,15 @@ def test_from_matplotlib_refuses_what_it_cannot_represent():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    # A contour set is still refused, and the refusal names it. (`imshow` *is*
+    # converted now — see the image tests below.)
+    import numpy as np
+
     figure, axes = plt.subplots()
-    axes.imshow([[1.0, 0.0], [0.0, 1.0]])
-    with pytest.raises(ValueError, match="cannot represent"):
+    axes.contour(np.array([[1.0, 0.0], [0.0, 1.0]]))
+    with pytest.raises(ValueError, match="QuadContourSet"):
         figspec.from_matplotlib(figure)
+    plt.close(figure)
 
 
 def _axes():
@@ -269,13 +275,125 @@ def test_an_empty_mark_is_an_error_rather_than_a_clean_report():
         assert errors in (["empty-mark"], ["short-line"]), problems
 
 
-def test_an_imshow_figure_is_refused_and_the_refusal_names_the_heatmap_mark():
+def _imshow(values, **kwargs):
     matplotlib = pytest.importorskip("matplotlib")
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots()
-    axes.imshow([[1.0, 2.0], [3.0, 4.0]])
-    with pytest.raises(ValueError, match="heatmap"):
+    axes.imshow(values, **kwargs)
+    figure.canvas.draw()
+    return figure, axes
+
+
+def _cell_fills(svg: str, count: int) -> list[str]:
+    """The fill of the first `count` cell rectangles, in document order.
+
+    The engine draws the cells first and a colour bar after them, so the matrix's
+    own cells are the first `rows x cols` rectangles.
+    """
+    return re.findall(r'<rect[^>]*fill="(#[0-9a-fA-F]{6})"', svg)[:count]
+
+
+def _near(drawn: str, expected: str, tolerance: int = 3) -> bool:
+    """The same colour, within one rounding step of the ramp lookup.
+
+    kuva and matplotlib sample their ramps with slightly different rounding —
+    measured: `#79d151` against `#7ad151`, one step in the green channel. The
+    claim under test is that the cell holds the right value, not that two
+    libraries round a lookup identically.
+    """
+    return all(
+        abs(int(drawn[index : index + 2], 16) - int(expected[index : index + 2], 16)) <= tolerance
+        for index in (1, 3, 5)
+    )
+
+
+def test_imshow_becomes_a_heatmap_with_the_same_colours():
+    """The strongest form: not "it converts" but "it draws the same values".
+
+    Each cell is compared with matplotlib's own ramp output for the value it
+    holds, so the ramp, the values and the row order are checked together.
+    """
+    matplotlib = pytest.importorskip("matplotlib")
+    from matplotlib import colormaps
+
+    values = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    figure, _axes = _imshow(values)
+    model = figspec.from_matplotlib(figure)
+    assert [mark["kind"] for mark in model["marks"]] == ["heatmap"]
+    # An "upper" image has its first row at the top; the model draws row 0 at the
+    # bottom, so the rows are reversed to keep the picture.
+    assert model["marks"][0]["values"] == [[4.0, 5.0, 6.0], [1.0, 2.0, 3.0]]
+
+    ramp = colormaps["viridis"]
+    low, high = 1.0, 6.0
+    rows = model["marks"][0]["values"]
+    drawn = _cell_fills(figspec.render_svg(model), len(rows) * len(rows[0]))
+    expected = [
+        matplotlib.colors.to_hex(ramp((value - low) / (high - low))) for row in rows for value in row
+    ]
+    assert len(drawn) == len(expected), (drawn, expected)
+    for got, want in zip(drawn, expected):
+        assert _near(got, want), (got, want, rows)
+    import matplotlib.pyplot as plt
+
+    plt.close(figure)
+
+
+def test_imshow_with_origin_lower_keeps_the_rows_as_written():
+    pytest.importorskip("matplotlib")
+    figure, _axes = _imshow([[1.0, 2.0], [3.0, 4.0]], origin="lower")
+    model = figspec.from_matplotlib(figure)
+    assert model["marks"][0]["values"] == [[1.0, 2.0], [3.0, 4.0]]
+    import matplotlib.pyplot as plt
+
+    plt.close(figure)
+
+
+def test_imshow_ticks_on_the_cells_become_the_names():
+    pytest.importorskip("matplotlib")
+    figure, axes = _imshow([[1.0, 2.0], [3.0, 4.0]])
+    axes.set_xticks([0, 1], labels=["Q1", "Q2"])
+    axes.set_yticks([0, 1], labels=["north", "south"])
+    figure.canvas.draw()
+    model = figspec.from_matplotlib(figure)
+    mark = model["marks"][0]
+    assert mark["col_labels"] == ["Q1", "Q2"]
+    # Row 0 of the model is the bottom row, which an "upper" image names with the
+    # *last* y tick.
+    assert mark["row_labels"] == ["south", "north"]
+    # No errors: the warnings are the source figure having no title or axis labels.
+    assert [p for p in figspec.inspect(model) if p["severity"] == "error"] == []
+    import matplotlib.pyplot as plt
+
+    plt.close(figure)
+
+
+def test_what_the_converter_refuses_about_an_image():
+    """Each refusal names what it saw, and none of them converts half a figure."""
+    pytest.importorskip("matplotlib")
+    import matplotlib.colors as colors
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    cases = [
+        ("rgb", dict(), np.zeros((2, 2, 3)), "colour image"),
+        ("ramp", dict(cmap="jet"), [[1.0, 2.0]], "jet"),
+        ("norm", dict(norm=colors.LogNorm()), [[1.0, 2.0]], "LogNorm"),
+        ("extent", dict(extent=(0, 10, 0, 20)), [[1.0, 2.0]], "extent"),
+        ("missing", dict(), [[1.0, float("nan")]], "masked or missing"),
+    ]
+    for name, kwargs, values, expected in cases:
+        figure, _axes = _imshow(values, **kwargs)
+        with pytest.raises(ValueError, match=expected):
+            figspec.from_matplotlib(figure)
+        plt.close(figure)
+
+    # A partial naming is refused rather than mislabelled.
+    figure, axes = _imshow([[1.0, 2.0, 3.0]])
+    axes.set_xticks([0], labels=["only"])
+    figure.canvas.draw()
+    with pytest.raises(ValueError, match="name \\[0.0\\] of 3 cells"):
         figspec.from_matplotlib(figure)
     plt.close(figure)

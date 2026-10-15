@@ -73,6 +73,11 @@ pub const CODEBOOK: &[(&str, &str, &str)] = &[
         "a line has fewer than two points, so there is no line to draw",
     ),
     (
+        "inapplicable-axis-setting",
+        ERROR,
+        "a heatmap's rows are its y axis, so y_min and a log scale cannot apply to it",
+    ),
+    (
         "ambiguous-labels",
         ERROR,
         "two marks declare different names for the same axis, so one would caption the other",

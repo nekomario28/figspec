@@ -5,8 +5,9 @@ Rust engine, and inspect *the same model* — with stable codes, an exit code, a
 no matplotlib in the renderer.
 
 ```sh
-figspec inspect revenue.json     # problems, no rendering, no execution
-figspec render  revenue.json -o revenue.svg
+figspec inspect    revenue.json            # problems, no rendering, no execution
+figspec render     revenue.json -o revenue.svg
+figspec storyboard revenue.json -o revenue.storyboard.svg   # with the problems boxed
 ```
 
 ```python
@@ -38,6 +39,31 @@ figspec.save(model, "revenue.svg")
 `y_err` is one magnitude per point, drawn both ways; `y_err_asymmetric` is
 `[lower, upper]` per point when the sides differ. Declaring both on one mark is
 refused, because one drawing cannot mean two things.
+
+## The storyboard
+
+`inspect` says what is wrong and which mark it is about. A reader still has to
+find that mark, so `storyboard` draws the figure and boxes the marks the findings
+name — numbered with the report's own positions:
+
+```
+revenue.json: 2 marks
+inspect: 4 problems (1 error)
+  [1] error m[0]     truncated-baseline: bars start at y=5, not 0, ...
+  [2] warn  -        no-title: the figure has no title, ...
+storyboard: 1 box(es) in revenue.storyboard.svg
+  [1] mark 0
+  finding(s) 2,3,4 are about no mark and are not boxed
+```
+
+The box is the mark's **real rectangle**, computed from the layout the engine
+computed — kuva publishes the plot rectangle and the ranges it drew against, and
+`tests/storyboard.rs` requires every box to land on the primitive kuva drew, for
+every mark kind, including log axes and a truncated baseline. So the picture
+cannot disagree with the report.
+
+A finding that is about no particular mark (a missing title) is reported and
+**not** boxed: there is nowhere honest to point.
 
 ## Why the model is data
 
@@ -84,6 +110,9 @@ Two kinds of finding, and the difference is deliberate:
 
 Exit policy, the same as the CLI's: **0** nothing to report, **1** at least one
 `error`, **2** the input could not be read. `warn` and `info` never fail a build.
+
+`truncated-baseline` is reported **once per categorical mark**: two bar marks on a
+trimmed axis are two misleading marks, and a fix to one of them is not the other.
 
 An unknown field is refused rather than ignored — a mistyped `y_min` that is
 silently dropped renders a different chart from the one that was written.

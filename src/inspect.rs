@@ -73,23 +73,23 @@ pub fn inspect(figure: &Figure) -> Report {
         .map(|refusal| problem(refusal.code, ERROR, refusal.message, refusal.mark))
         .collect();
 
-    if let Some(categories) = figure.marks.iter().find_map(|mark| mark.categories()) {
-        let _ = categories;
-        if let Some(min) = figure.y_min {
-            // A bar's length is the value. Trimming the axis trims the length.
-            if min > 0.0 {
-                let mark = figure
-                    .marks
-                    .iter()
-                    .position(|candidate| candidate.categories().is_some());
-                problems.push(problem(
-                    "truncated-baseline",
-                    ERROR,
-                    format!(
-                        "bars start at y={min}, not 0, so their lengths no longer mean their values"
-                    ),
-                    mark,
-                ));
+    if let Some(min) = figure.y_min {
+        // A bar's length is the value. Trimming the axis trims the length.
+        if min > 0.0 {
+            // One finding per categorical mark, each pointing at its own mark: a
+            // figure with two bar marks fails in two places, and replacing one
+            // would otherwise read as unchanged.
+            for (index, mark) in figure.marks.iter().enumerate() {
+                if mark.categories().is_some() {
+                    problems.push(problem(
+                        "truncated-baseline",
+                        ERROR,
+                        format!(
+                            "bars start at y={min}, not 0, so their lengths no longer mean their values"
+                        ),
+                        Some(index),
+                    ));
+                }
             }
         }
     }

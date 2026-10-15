@@ -16,11 +16,15 @@
 
 pub mod inspect;
 pub mod model;
+pub mod place;
 pub mod render;
+pub mod storyboard;
 
 pub use inspect::{inspect, Report, ERROR, INFO, WARN};
 pub use model::{Figure, Mark, ModelError, Scale};
+pub use place::{MarkBox, PlotArea};
 pub use render::{to_png, to_svg, RenderError};
+pub use storyboard::Storyboard;
 
 /// Render a figure given as JSON to SVG.
 pub fn render_svg(model_json: &str) -> Result<String, String> {
@@ -32,6 +36,16 @@ pub fn render_svg(model_json: &str) -> Result<String, String> {
 pub fn render_png(model_json: &str) -> Result<Vec<u8>, String> {
     let figure = Figure::from_json(model_json, "(model)").map_err(|error| error.to_string())?;
     to_png(&figure).map_err(|error| error.to_string())
+}
+
+/// The figure as an SVG with a numbered box on every mark a finding names, given
+/// as JSON. The numbers are the findings' positions in `inspect`'s report.
+pub fn storyboard_svg(model_json: &str) -> Result<String, String> {
+    let figure = Figure::from_json(model_json, "(model)").map_err(|error| error.to_string())?;
+    let report = inspect(&figure);
+    storyboard::of(&figure, &report)
+        .map(|drawn| drawn.svg)
+        .map_err(|error| error.to_string())
 }
 
 /// Inspect a figure given as JSON, returning the report as JSON.
@@ -106,6 +120,11 @@ mod python {
         super::inspect_json(model_json).map_err(PyValueError::new_err)
     }
 
+    #[pyfunction]
+    fn storyboard_svg(model_json: &str) -> PyResult<String> {
+        super::storyboard_svg(model_json).map_err(PyValueError::new_err)
+    }
+
     /// figspec's compiled half. The Python package in `python/figspec` is the
     /// public surface; this module only carries the model across the boundary as
     /// JSON, so both languages see the same checks and the same rendering.
@@ -114,6 +133,7 @@ mod python {
         module.add_function(wrap_pyfunction!(render_svg, module)?)?;
         module.add_function(wrap_pyfunction!(render_png, module)?)?;
         module.add_function(wrap_pyfunction!(inspect_json, module)?)?;
+        module.add_function(wrap_pyfunction!(storyboard_svg, module)?)?;
         module.add("__doc__", "figspec's compiled extension")?;
         Ok(())
     }

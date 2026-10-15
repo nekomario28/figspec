@@ -292,6 +292,7 @@ fn the_codebook_names_every_code_the_checks_emit() {
         "empty-mark",
         "short-line",
         "ambiguous-labels",
+        "inapplicable-axis-setting",
         "non-finite-value",
         "mismatched-lengths",
         "truncated-baseline",

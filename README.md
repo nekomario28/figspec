@@ -48,9 +48,13 @@ A `heatmap` is a matrix: the value is the colour, both axes are categorical, and
 `color_map` is a closed set (`viridis` — the default — `turbo`, `inferno`,
 `magma`, `plasma`, `cividis`, `warm`, `cool`, `cubehelix`), so a typo cannot
 quietly become the default ramp. Its **row 0 is drawn at the bottom**, which is
-what a y axis means; `row_labels` is read in the same order as `values`. Neither a
-trimmed axis nor a log one is a finding for a heatmap, because its axes are
-categorical: the colour is the value, and colour is not a length.
+what a y axis means; `row_labels` is read in the same order as `values`. Its rows
+*are* its y axis, so `y_min` and a log scale **cannot apply to it** — and they are
+not inert either: measured, `y_min` stretches the cells (3 rows of a 548 px canvas:
+148.5 px each at `y_min` 0.5, 178.2 at 1.0, 445.5 at 2.5, the last row ending up
+past the canvas) and a log scale changes them (106.3 px). Declaring either is
+`inapplicable-axis-setting`, so the picture cannot follow an instruction it cannot
+honour.
 
 ## The storyboard
 
@@ -110,6 +114,7 @@ Few on purpose. Each one says what is wrong, where, and what to do instead.
 | `empty-mark` | error | a mark declares nothing to draw, so it would render as nothing |
 | `short-line` | error | a line has fewer than two points, so there is no line to draw |
 | `ambiguous-labels` | error | two marks declare different names for the same axis, so one would caption the other |
+| `inapplicable-axis-setting` | error | a heatmap's rows are its y axis, so `y_min` and a log scale cannot apply to it |
 | `no-title` | warn | the figure has no title, so a reader cannot tell what it shows |
 | `no-axis-label` | info | an axis has no label |
 
@@ -151,14 +156,23 @@ matplotlib is supported as an *input*, never as a dependency of the renderer:
 model = figspec.from_matplotlib(figure)
 ```
 
-That converts **lines, scatter, single and grouped bars, and symmetric or
-asymmetric error bars**, carries the y limits across (which is where a truncated
-baseline comes from), and **refuses** what it cannot represent: an image, a
-contour or violin set, a stacked bar, bars that sit between tick labels (the
-model's bars are categorical, and inventing category names would be a label the
-figure never had), or a group whose series disagree in length. A converted figure
-that silently omits half the chart is worse than no conversion, because it looks
+That converts **lines, scatter, single and grouped bars, symmetric or asymmetric
+error bars, and an `imshow` whose cells are a matrix of values**, carries the y
+limits across (which is where a truncated baseline comes from), and **refuses**
+what it cannot represent: a colour image, a contour or violin set, a stacked bar,
+bars that sit between tick labels (the model's bars are categorical, and inventing
+category names would be a label the figure never had), a group whose series
+disagree in length, an image drawn over an explicit `extent` or in a colour ramp
+the model does not name, and an image with a masked cell. A converted figure that
+silently omits half the chart is worse than no conversion, because it looks
 complete.
+
+For an `imshow` the picture is checked cell by cell: every converted cell's colour
+is compared with matplotlib's own ramp output for the value it holds, so the ramp,
+the values and the row order are verified together. An `origin="upper"` image is
+reversed, because the model draws row 0 at the bottom. The source's y limits and
+canvas size are dropped, because an image's y limits are its cell grid and the
+engine sizes a matrix from its cells.
 
 Grouped bars follow matplotlib's own convention — one `axes.bar` call per series,
 the same x array with an offset — and the positions are *checked* against it, so

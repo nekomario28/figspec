@@ -53,9 +53,30 @@ Fixed by making the claim structural rather than aspirational:
 drawn is an `error` *and* a render failure, and every mark kind in a valid figure
 has no refusals and renders.
 
-## Not in this slice
+## `imshow`, converted
 
-`from_matplotlib` still refuses `imshow`: converting it needs the extent and
-origin conventions and the axis semantics checked against matplotlib's own
-rendering. The refusal now names the heatmap mark, so the reader knows the model
-can express it even though the converter does not.
+`from_matplotlib` now converts an `imshow` whose cells are a matrix of values, and
+refuses the rest with the reason. Every rule came from measuring matplotlib:
+
+| measured | what the converter does |
+| --- | --- |
+| a default image spans `(-0.5, cols - 0.5, rows - 0.5, -0.5)` with `origin="upper"` — row 0 is at the **top** | reverses the rows, because the model draws row 0 at the bottom |
+| a default image's ticks are numeric fractions (`-0.5, 0.0, 0.5, ...`) | carries no names — those numbers are not cell names |
+| `set_xticks([0, 1], labels=[...])` puts ticks exactly on the cells | carries those as `col_labels`/`row_labels`, reversed for `origin="upper"` |
+| `get_ylim()` for an image is the **cell grid** in inverted order (`(2.5, -0.5)`) | drops it: carrying it set `y_min`, which stretched the cells and pushed the last row past the canvas |
+| the figure's inches are a matplotlib notion and the engine sizes a matrix from its cells | drops `width`/`height` for a matrix figure |
+| an explicit `extent`, a colour image, a masked cell, a ramp the model does not name, a non-`Normalize` norm, a partial tick naming, a log y axis | refused, each naming what it saw |
+
+The conversion is checked cell by cell against matplotlib's own ramp output, so
+the ramp, the values and the row order are verified together
+(`tests_python/test_figspec.py`), and the two pictures were compared by eye.
+
+### The defect that measurement found
+
+Writing the conversion exposed that `y_min` and a log scale are **not inert** for a
+heatmap: measured, `y_min` stretches its cells (3 rows of a 548 px canvas: 148.5 px
+each at `y_min` 0.5, 178.2 at 1.0, 445.5 at 2.5 — the last row beyond the canvas)
+and a log scale changes them (106.3 px). So a figure that declares either for a
+heatmap is now refused as `inapplicable-axis-setting` rather than drawn as a
+picture that follows an instruction it cannot honour. The earlier note in this file
+that they were "not a finding" was an assumption; the render says otherwise.

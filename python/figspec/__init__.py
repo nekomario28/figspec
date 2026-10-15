@@ -289,6 +289,159 @@ def _bar_marks(axes: Any) -> list[dict[str, Any]]:
     ]
 
 
+#: The colour ramps the model names. An image drawn with anything else is
+#: refused with the name: a converted figure drawn in a different ramp is a
+#: picture that means something else.
+MODEL_RAMPS = frozenset(
+    {"viridis", "turbo", "inferno", "magma", "plasma", "cividis", "warm", "cool", "cubehelix"}
+)
+
+
+def _heatmap_marks(axes: Any) -> list[dict[str, Any]]:
+    """`imshow` as the model's heatmap, or a refusal naming why not.
+
+    Measured against matplotlib rather than assumed:
+
+    * a default image spans `(-0.5, cols - 0.5, rows - 0.5, -0.5)` with
+      `origin="upper"`, so array row 0 is at the **top** — the model draws row 0
+      at the bottom, so the rows are reversed to keep the picture the same;
+    * a default image's ticks are numeric fractions, not cell names, so they are
+      not carried; labels are taken only when the ticks sit **exactly** on the
+      cells (`set_xticks([0, 1], labels=[...])`);
+    * an explicit `extent` puts the cells on a quantitative axis, which the
+      model's categorical heatmap cannot express.
+
+    What is *not* carried: `aspect` (the model has no such field — its cells fill
+    the plot rectangle) and `interpolation` (the model draws one colour per cell).
+    The values, their order, the ramp and the names are.
+    """
+    marks: list[dict[str, Any]] = []
+    for image in getattr(axes, "images", []):
+        array = image.get_array()
+        rows = [list(row) for row in array]
+        if not rows:
+            raise ValueError("figspec cannot represent an empty image")
+        first = rows[0]
+        if first and hasattr(first[0], "__len__"):
+            raise ValueError(
+                "figspec cannot represent a colour image (three values per pixel); "
+                "its heatmap holds one value per cell"
+            )
+        width = len(first)
+        if any(len(row) != width for row in rows) or width == 0:
+            raise ValueError("figspec cannot represent an image whose rows have different widths")
+
+        name = image.get_cmap().name
+        if name not in MODEL_RAMPS:
+            raise ValueError(
+                f"figspec cannot represent the colour ramp {name!r}; its heatmap names "
+                f"one of {sorted(MODEL_RAMPS)}"
+            )
+        norm = type(image.norm).__name__
+        if norm != "Normalize":
+            raise ValueError(
+                f"figspec cannot represent a {norm}; its heatmap draws the values "
+                "linearly"
+            )
+
+        left, right, bottom, top = (float(value) for value in image.get_extent())
+        upper = str(image.origin) == "upper"
+        if upper:
+            expected = (-0.5, width - 0.5, len(rows) - 0.5, -0.5)
+        else:
+            expected = (-0.5, width - 0.5, -0.5, len(rows) - 0.5)
+        if (
+            abs(left - expected[0]) > 1e-9
+            or abs(right - expected[1]) > 1e-9
+            or abs(bottom - expected[2]) > 1e-9
+            or abs(top - expected[3]) > 1e-9
+        ):
+            raise ValueError(
+                f"figspec cannot represent an image drawn over extent "
+                f"({left:g}, {right:g}, {bottom:g}, {top:g}): its heatmap's cells are "
+                "categorical, so they sit on 0..n-1"
+            )
+
+        values: list[list[float]] = []
+        for row in rows:
+            converted: list[float] = []
+            for cell in row:
+                if cell is None or not isinstance(cell, (int, float)) or cell != cell:
+                    raise ValueError(
+                        "figspec cannot represent an image with a masked or missing "
+                        "cell; its heatmap holds a number in every cell"
+                    )
+                converted.append(float(cell))
+            values.append(converted)
+        # The model draws row 0 at the bottom; an "upper" image has its first row at
+        # the top, so the order is reversed rather than the picture.
+        if upper:
+            values.reverse()
+
+        one: dict[str, Any] = {
+            "kind": "heatmap",
+            "values": values,
+            "color_map": name,
+        }
+        labels = _cell_labels(axes, width, len(rows), upper)
+        one.update(labels)
+        label = str(image.get_label())
+        if label and not label.startswith("_"):
+            one["label"] = label
+        marks.append(one)
+    return marks
+
+
+def _cell_labels(axes: Any, width: int, height: int, upper: bool) -> dict[str, Any]:
+    """The axis names, when the ticks sit on the cells and on nothing else."""
+    out: dict[str, Any] = {}
+    columns = _tick_labels(axes, "x", width)
+    if columns is not None:
+        out["col_labels"] = columns
+    rows = _tick_labels(axes, "y", height)
+    if rows is not None:
+        # A y axis grows upward, so an "upper" image's tick at 0 names its last row.
+        out["row_labels"] = list(reversed(rows)) if upper else rows
+    return out
+
+
+def _tick_labels(axes: Any, which: str, count: int) -> list[str] | None:
+    """`count` names for the cells, or `None` when the ticks do not name them.
+
+    Three measured cases, and the difference between them matters:
+
+    * **the ticks are exactly the cells** (`set_xticks([0, 1], labels=[...])`) —
+      those are the cells' names, so they are carried;
+    * **the ticks name some of the cells** — refused. Naming the cells it can and
+      leaving the rest unnamed would put the right name next to the wrong row;
+    * **the ticks are a quantitative axis** — which is what a default `imshow`
+      draws (`-0.5, 0.0, 0.5, 1.0, ...`): its numbers are not names, so none are
+      carried. Naming the cells "0.0", "1.0", "2.0" from them would invent a
+      categorical axis the figure never had.
+    """
+    ticks = axes.get_xticks() if which == "x" else axes.get_yticks()
+    labels = [
+        tick.get_text()
+        for tick in (axes.get_xticklabels() if which == "x" else axes.get_yticklabels())
+    ]
+    if len(labels) != len(ticks):
+        return None  # matplotlib draws tick labels lazily; not drawn, not known
+    named = {
+        float(round(float(position), 9)): label
+        for position, label in zip(ticks, labels)
+        if label
+    }
+    cells = set(range(count))
+    if set(named) == cells:
+        return [named[index] for index in range(count)]
+    if named and set(named) < cells:
+        raise ValueError(
+            f"figspec cannot represent a heatmap whose {which} labels name "
+            f"{sorted(set(named) & cells)} of {count} cells: its names belong to the cells"
+        )
+    return None
+
+
 def _marks(axes: Any) -> list[dict[str, Any]]:
     """The marks of one axes, in the order matplotlib draws them.
 
@@ -335,6 +488,7 @@ def _marks(axes: Any) -> list[dict[str, Any]]:
         unsupported.append(name)
 
     marks.extend(_bar_marks(axes))
+    marks.extend(_heatmap_marks(axes))
 
     for patch in axes.patches:
         # A rectangle that is not part of a bar container is an annotation with a
@@ -345,8 +499,9 @@ def _marks(axes: Any) -> list[dict[str, Any]]:
 
     # `images` is the one that bites: `imshow` puts its picture there, not in
     # `patches` or `collections`, so a converter that only looked at those would
-    # report a figure with no marks as complete.
-    for attribute in ("images", "tables", "texts"):
+    # report a figure with no marks as complete. `_heatmap_marks` converts the
+    # ones the model can hold, and refuses the rest with the reason.
+    for attribute in ("tables", "texts"):
         for artist in getattr(axes, attribute, []):
             unsupported.append(type(artist).__name__)
 
@@ -355,8 +510,8 @@ def _marks(axes: Any) -> list[dict[str, Any]]:
             "figspec cannot represent "
             + ", ".join(sorted(set(unsupported)))
             + "; it converts lines, scatter, bars and grouped bars, with error "
-            "bars, and the *model* also has a heatmap mark — write that one "
-            "directly. Refusing rather than converting part of the figure"
+            "bars, and an image whose cells are a matrix of values. Refusing "
+            "rather than converting part of the figure"
         )
     return marks
 
@@ -396,19 +551,41 @@ def from_matplotlib(figure: Any, *, axes_index: int = 0) -> Model:
         raise ValueError(f"the figure has {len(axes_list)} axes, not {axes_index + 1}")
     axes = axes_list[axes_index]
 
+    marks = _marks(axes)
+    scale_y = _scale(axes, "y")
+    # A matrix is a different kind of axes: its y axis is the rows, so the source's
+    # y limits and canvas size mean something else.
+    #
+    #   * `get_ylim()` for an image is the *cell grid* in the inverted axis order
+    #     (measured: `(2.5, -0.5)` for a three-row image with `origin="upper"`), so
+    #     carrying it sets `y_min`, which stretches the cells and pushes the last
+    #     row past the canvas.
+    #   * the figure's size in inches is a matplotlib notion; the engine sizes a
+    #     matrix from its cells, so a small canvas clips them (measured: a 3-row
+    #     matrix needs about 495 px of the default 548, and the source figure was
+    #     360).
+    #
+    # Both are dropped rather than carried, and `y_min` on a heatmap is refused by
+    # the model, so a converted figure always renders what it holds.
+    has_matrix = any(mark["kind"] == "heatmap" for mark in marks)
+    if has_matrix and scale_y == "log":
+        raise ValueError(
+            "figspec cannot represent an image on a log y axis; its heatmap's rows "
+            "are categorical"
+        )
     model: Model = Model(
         {
-            "marks": _marks(axes),
+            "marks": marks,
             "title": _title(figure, axes),
             **_axis_labels(axes),
             "x_scale": _scale(axes, "x"),
-            "y_scale": _scale(axes, "y"),
-            **_figsize(figure),
+            "y_scale": scale_y,
+            **({} if has_matrix else _figsize(figure)),
         }
     )
     # matplotlib's own y limits are carried over, because that is where a
     # truncated baseline comes from and the checks must see it.
     low, _high = axes.get_ylim()
-    if _scale(axes, "y") == "linear" and low > 0.0:
+    if not has_matrix and scale_y == "linear" and low > 0.0:
         model["y_min"] = float(low)
     return model

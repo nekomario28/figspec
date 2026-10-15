@@ -111,17 +111,25 @@ fn an_unknown_colour_map_is_refused_when_the_model_is_read() {
 }
 
 #[test]
-fn a_heatmap_has_no_bar_semantics() {
-    // A matrix is not a bar chart: a trimmed axis is not misleading here, because
-    // colour is not a length.
-    let mut figure = heat(vec![vec![1.0, 2.0, 3.0]]);
-    figure.y_min = Some(1.0);
-    assert!(codes(&figure).is_empty(), "{:?}", codes(&figure));
-    assert!(to_svg(&figure).is_ok());
+fn a_heatmap_refuses_an_axis_setting_it_cannot_honour() {
+    // A matrix is not a bar chart: colour is not a length, so a trimmed axis is
+    // not `truncated-baseline`. But the axis start and a log scale are not *inert*
+    // either — measured, they stretch and change the cells — so they are refused
+    // with the reason rather than drawn as something the declaration did not ask
+    // for.
+    let mut trimmed = heat(vec![vec![1.0, 2.0, 3.0]]);
+    trimmed.y_min = Some(1.0);
+    assert_eq!(codes(&trimmed), ["inapplicable-axis-setting"]);
+    assert!(
+        !codes(&trimmed).contains(&"truncated-baseline".to_string()),
+        "a matrix is not a bar"
+    );
+    assert!(
+        to_svg(&trimmed).is_err(),
+        "it must not draw a different picture"
+    );
 
-    // Colour is not a length, and it is not on the axis either: neither a
-    // trimmed axis nor a log one says anything about where a cell goes.
     let mut logged = heat(vec![vec![0.0, 2.0]]);
     logged.y_scale = figspec::model::Scale::Log;
-    assert!(codes(&logged).is_empty(), "{:?}", codes(&logged));
+    assert_eq!(codes(&logged), ["inapplicable-axis-setting"]);
 }

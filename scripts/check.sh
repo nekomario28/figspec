@@ -12,7 +12,10 @@ step cargo fmt --check
 step cargo clippy --locked --all-targets --all-features -- -D warnings
 step cargo test --locked
 step cargo build --locked --features python
-step uv run --python 3.13 --with maturin --with pytest --with matplotlib sh -c \
+# matplotlib is installed here, so a skipped importer test would be a disabled test:
+# conftest.py turns that into a failure.
+step env FIGSPEC_REQUIRE_ALL_CAPABILITIES=1 uv run --python 3.13 \
+  --with maturin --with pytest --with matplotlib sh -c \
   'maturin develop --release && pytest tests_python -q'
 # After `maturin develop`: the importer mutants run the Python tests, which need the
 # compiled extension beside the package they import.

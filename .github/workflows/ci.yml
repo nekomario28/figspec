@@ -33,6 +33,10 @@ jobs:
           uv pip install maturin pytest matplotlib
           uv run maturin develop --release
           uv run pytest tests_python -q
+      # After `maturin develop`: the importer mutants run the Python tests, which
+      # need the compiled extension beside the package they import.
+      - name: Mutation catalogue
+        run: python3 scripts/check_mutations.py
 
   # One wheel per platform, built *and exercised* on that platform. Cross-building
   # an aarch64 wheel on an x86_64 runner produces a file that cannot be installed

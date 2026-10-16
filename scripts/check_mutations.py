@@ -146,6 +146,14 @@ def mutations() -> list[Mutation]:
         ),
         # --- the documents -----------------------------------------------------
         Mutation(
+            "skip-instead-of-asserting",
+            "tests_python/test_figspec.py",
+            "    assert [p[\"code\"] for p in errors] == [\"mismatched-lengths\"], problems",
+            "    import pytest; pytest.skip(\"dodging the assertion\")",
+            ["tests_python/test_figspec.py", "-k", "ragged_matrix"],
+            python=True,
+        ),
+        Mutation(
             "readme-figure-stale",
             "examples/storyboard_demo.json",
             '"y_min": 25,',
@@ -217,40 +225,36 @@ def mutations() -> list[Mutation]:
 
 
 def prepare(scratch: Path) -> Path:
-    """A disposable copy of the crate, without the build cache."""
+    """A disposable copy of the repository, without the build cache.
+
+    Everything is copied except what a mutated build must not touch or cannot use.
+    An allowlist was the first attempt and it drifted twice — `examples/` and then
+    `conftest.py` were each missing, and a missing file looks exactly like a
+    surviving mutant.
+    """
     tree = scratch / "tree"
     if tree.exists():
         shutil.rmtree(tree)
-    tree.mkdir(parents=True)
-    for name in (
-        "src",
-        "python",
-        "tests",
-        "tests_python",
-        "scripts",
-        "docs",
-        "examples",
-        "specs",
-        "Cargo.toml",
-        "Cargo.lock",
-        "pyproject.toml",
-        "README.md",
-        "AGENTS.md",
-        "llms.txt",
-        "LICENSE",
-    ):
-        source = ROOT / name
-        target = tree / name
-        if not source.exists():
-            continue
-        if source.is_dir():
-            # `copy` (not `copy2`): cargo decides freshness by *mtime*, and a copy
-            # that preserves the original's timestamp can look older than the
-            # cached artifact built from a different revision. Measured: with
-            # `copy2` a stale test binary was served and a control failed.
-            shutil.copytree(source, target, copy_function=shutil.copy)
-        else:
-            shutil.copy(source, target)
+    shutil.copytree(
+        ROOT,
+        tree,
+        ignore=shutil.ignore_patterns(
+            ".git",
+            ".venv",
+            "target",
+            "dist",
+            "__pycache__",
+            "*.pyc",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+        ),
+        # `copy` (not `copy2`): cargo decides freshness by *mtime*, and a copy that
+        # preserves the original's timestamp can look older than the cached artifact
+        # built from a different revision. Measured: with `copy2` a stale test binary
+        # was served and a control failed.
+        copy_function=shutil.copy,
+    )
     return tree
 
 
@@ -271,6 +275,9 @@ def run(tree: Path, mutation: Mutation) -> tuple[int, str]:
         # The editable install points at the real checkout, so the scratch copy has
         # to come first on the path or the mutant would never be imported.
         env["PYTHONPATH"] = str(tree / "python")
+        # The harness runs where matplotlib is installed, so a test that skips is a
+        # disabled test rather than a missing capability (conftest.py enforces it).
+        env["FIGSPEC_REQUIRE_ALL_CAPABILITIES"] = "1"
     result = subprocess.run(
         command, cwd=tree, capture_output=True, text=True, timeout=1800, env=env
     )

@@ -62,15 +62,28 @@ honour.
 find that mark, so `storyboard` draws the figure and boxes the marks the findings
 name — numbered with the report's own positions:
 
+![The storyboard of a declared bar chart whose axis starts at 25 instead of zero:
+the bar mark is boxed and numbered 1](docs/assets/storyboard.svg)
+
+That figure is generated from [`examples/storyboard_demo.json`](examples/storyboard_demo.json)
+by [`scripts/make_readme_figure.py`](scripts/make_readme_figure.py), and a test
+fails if the committed file and the renderer disagree — the renderer is
+deterministic, so the check is an equality rather than a tolerance.
+
 ```
-revenue.json: 2 marks
-inspect: 4 problems (1 error)
-  [1] error m[0]     truncated-baseline: bars start at y=5, not 0, ...
-  [2] warn  -        no-title: the figure has no title, ...
-storyboard: 1 box(es) in revenue.storyboard.svg
+$ figspec storyboard examples/storyboard_demo.json -o demo.storyboard.svg
+examples/storyboard_demo.json: 1 marks
+inspect: 1 problem (1 error)
+  [1] error m[0]     truncated-baseline: bars start at y=25, not 0, so their
+                     lengths no longer mean their values
+storyboard: 1 box(es) in demo.storyboard.svg
   [1] mark 0
-  finding(s) 2,3,4 are about no mark and are not boxed
 ```
+
+The numbers are the report's own positions, so the picture and the report can be
+read against each other: `[1]` in the transcript is box `1` on the chart. A
+finding about no particular mark (a missing title, say) is listed and **not**
+boxed — there is nowhere honest to point — and the summary says so.
 
 The box is the mark's **real rectangle**, computed from the layout the engine
 computed — kuva publishes the plot rectangle and the ranges it drew against, and

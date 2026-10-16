@@ -56,6 +56,21 @@ came first:
 - [x] [04 — the storyboard](slices/04-storyboard.md)
 - [x] [05 — a matrix, and one list of what cannot be drawn](slices/05-heatmap.md)
 
+## Mechanisms added after the slices
+
+Three things are not slices but parts of the repository now, and each exists
+because a claim needed evidence rather than an argument:
+
+- [`docs/CONTRACT.md`](../docs/CONTRACT.md) — what an integrator may rely on, and
+  explicitly what may change in a minor version. The drawing itself is on the
+  second list: layout, fonts and cell aspect are `kuva`'s.
+- `scripts/check_mutations.py` — 16 named faults, one per rule, each required to
+  make its test fail **with an assertion**, after green controls. Writing it found a
+  test that compared a log axis only at its own two ends, where a logarithmic map
+  and a linear one agree.
+- `tests/docs.rs` — every relative link in the entry documents must resolve.
+  Written after a README learned to point at files that did not exist.
+
 ## Evidence
 
 - `cargo test`: 46 properties, including byte-identical renders and a refused

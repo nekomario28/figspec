@@ -397,3 +397,52 @@ def test_what_the_converter_refuses_about_an_image():
     with pytest.raises(ValueError, match="name \\[0.0\\] of 3 cells"):
         figspec.from_matplotlib(figure)
     plt.close(figure)
+
+
+def test_the_readme_figure_is_a_fresh_render():
+    """A committed figure is a claim; regenerating it is the only proof.
+
+    `scripts/make_readme_figure.py` renders the storyboard of
+    `examples/storyboard_demo.json`, and figspec renumbers the engine's clip ids so
+    the bytes are stable. That makes this an equality check, not a tolerance.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "make_readme_figure", root / "scripts" / "make_readme_figure.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    committed = (root / "docs" / "assets" / "storyboard.svg").read_text(encoding="utf-8")
+    assert module.render() == committed, (
+        "docs/assets/storyboard.svg is not what the renderer produces now; "
+        "re-run `python scripts/make_readme_figure.py`"
+    )
+    assert "figspec-storyboard" in committed
+
+
+def test_the_readmes_transcript_matches_the_committed_example():
+    """The storyboard block on the front page is a claim about this output.
+
+    Measured from `examples/storyboard_demo.json`, which the figure is drawn from
+    as well — one model behind the prose, the transcript and the picture. A drift
+    here is the documentation promising something the tool stopped doing.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "README.md").read_text(encoding="utf-8")
+    block = text.split("$ figspec storyboard examples/storyboard_demo.json", 1)
+    assert len(block) == 2, "the README no longer shows the storyboard transcript"
+    shown = block[1].split("```", 1)[0]
+    problems = int(re.search(r"inspect: (\d+) problems?", shown).group(1))
+    errors = int(re.search(r"\((\d+) errors?\)", shown).group(1))
+    codes = re.findall(r"\[\d+\]\s+\S+\s+\S+\s+([a-z][a-z0-9-]+):", shown)
+
+    model = figspec.load(root / "examples" / "storyboard_demo.json")
+    report = figspec.inspect(model)
+    assert (len(report), sum(1 for p in report if p["severity"] == "error")) == (problems, errors)
+    assert [p["code"] for p in report][: len(codes)] == codes

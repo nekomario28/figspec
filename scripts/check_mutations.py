@@ -146,6 +146,14 @@ def mutations() -> list[Mutation]:
         ),
         # --- the documents -----------------------------------------------------
         Mutation(
+            "readme-figure-stale",
+            "examples/storyboard_demo.json",
+            '"y_min": 25,',
+            '"y_min": 24,',
+            ["tests_python/test_figspec.py", "-k", "readme_figure"],
+            python=True,
+        ),
+        Mutation(
             "readme-link-dangling",
             "README.md",
             "[`docs/CONTRACT.md`](docs/CONTRACT.md)",
@@ -221,6 +229,7 @@ def prepare(scratch: Path) -> Path:
         "tests_python",
         "scripts",
         "docs",
+        "examples",
         "specs",
         "Cargo.toml",
         "Cargo.lock",

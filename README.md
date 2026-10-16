@@ -184,6 +184,15 @@ the importer works out of the box — under one condition, recorded in
 [`specs/slices/03-release.md`](specs/slices/03-release.md): importing figspec must
 stay numpy-free, so the renderer and the checks keep working without it.
 
+## Documentation
+
+- [`docs/CONTRACT.md`](docs/CONTRACT.md) — what an integrator may rely on: codes,
+  exit codes, the report and model shapes, the Python surface, and what is
+  explicitly not promised.
+- [`specs/README.md`](specs/README.md) — the goal, the decisions, and the slice
+  record, including the measurements each decision rests on.
+- [`AGENTS.md`](AGENTS.md) — the loop, for an agent working in this repository.
+
 ## What this is not
 
 - **Not a matplotlib-compatible API.** You do not port your plotting code to

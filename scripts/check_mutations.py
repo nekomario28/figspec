@@ -144,6 +144,14 @@ def mutations() -> list[Mutation]:
             "            (value - low) / (high - low)",
             ["--test", "storyboard", "a_log_axis_maps_as_the_engine_does"],
         ),
+        # --- the documents -----------------------------------------------------
+        Mutation(
+            "readme-link-dangling",
+            "README.md",
+            "[`docs/CONTRACT.md`](docs/CONTRACT.md)",
+            "[`docs/CONTRACT.md`](docs/PLAN.md)",
+            ["--test", "docs", "every_link_in_the_entry_documents_resolves"],
+        ),
         # --- the storyboard ----------------------------------------------------
         Mutation(
             "storyboard-numbering-off-by-one",
@@ -212,14 +220,20 @@ def prepare(scratch: Path) -> Path:
         "tests",
         "tests_python",
         "scripts",
+        "docs",
+        "specs",
         "Cargo.toml",
         "Cargo.lock",
         "pyproject.toml",
         "README.md",
+        "AGENTS.md",
+        "llms.txt",
         "LICENSE",
     ):
         source = ROOT / name
         target = tree / name
+        if not source.exists():
+            continue
         if source.is_dir():
             # `copy` (not `copy2`): cargo decides freshness by *mtime*, and a copy
             # that preserves the original's timestamp can look older than the

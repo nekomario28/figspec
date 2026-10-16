@@ -14,6 +14,9 @@ step cargo test --locked
 step cargo build --locked --features python
 step uv run --python 3.13 --with maturin --with pytest --with matplotlib sh -c \
   'maturin develop --release && pytest tests_python -q'
+# After `maturin develop`: the importer mutants run the Python tests, which need the
+# compiled extension beside the package they import.
+step python3 scripts/check_mutations.py
 step uv run --with maturin sh -c 'maturin build --release --locked -o dist'
 step uv run --python 3.13 python scripts/check_consumer.py --wheel-dir dist
 

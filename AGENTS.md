@@ -31,6 +31,13 @@ Common fixes: `truncated-baseline` → drop `y_min`, or use a line instead of ba
 `mismatched-lengths` → one value per category; `non-positive-on-log-scale` → a log
 axis needs positive values; `empty-figure` → add a mark.
 
+## Before calling a change done
+
+`bash scripts/check.sh` — formatting, clippy with `-D warnings`, the Rust tests,
+the mutation catalogue, the Python bindings and tests, the wheel, and the consumer
+check. The mutation catalogue is the part that proves the *tests* would notice:
+each entry removes one rule and requires an assertion to fail.
+
 ## Two rules this project holds itself to
 
 - **Refuse rather than approximate.** An unknown field, a mark that cannot be

@@ -207,5 +207,13 @@ pip install maturin && maturin develop --release
 cargo test
 ```
 
+`scripts/check_mutations.py` is the other half of that: it removes one rule at a
+time — the row reversal a converted image depends on, the extent check, the
+category pitch a box is drawn on — and requires the named test to fail with an
+assertion. Green controls run first, so a "caught" fault cannot be a broken test,
+and nothing is edited in place: the sources are copied to a scratch tree and the
+build cache is kept between runs. Writing it found a test that only compared a log
+axis at its own two ends, where a logarithmic map and a linear one agree.
+
 MIT licensed. The renderer is MIT-licensed too (kuva), and its dependency tree is
 the one that ships an image.

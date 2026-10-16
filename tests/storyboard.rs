@@ -260,7 +260,10 @@ fn a_grouped_bar_box_covers_every_sub_bar() {
 
 #[test]
 fn a_log_axis_maps_as_the_engine_does() {
-    let points = vec![[1.0, 1.0], [2.0, 100.0]];
+    // The middle point is the one that matters: at the range's own ends a linear
+    // map agrees with a logarithmic one, so only an interior value tells them
+    // apart. (Found by removing the logarithm and watching this test pass.)
+    let points = vec![[1.0, 1.0], [2.0, 100.0], [1.5, 10.0]];
     let plot = || -> Plot {
         ScatterPlot::new()
             .with_data(points.iter().map(|p| (p[0], p[1])))

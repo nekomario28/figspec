@@ -156,6 +156,16 @@ def _points(line: Any) -> list[list[float]]:
     return [[float(x), float(y)] for x, y in data]
 
 
+def _spread(values: list[float]) -> float:
+    """The range of a list of numbers: zero when they are all equal.
+
+    Comparing measured dimensions with this rather than a set means float noise
+    (`0.4` vs `0.4000000000000001`) is not a difference, while a real difference
+    still is.
+    """
+    return max(values) - min(values) if values else 0.0
+
+
 def _error_bars(axes: Any) -> tuple[dict[int, dict[str, Any]], set[int]]:
     """Recover error bars, and the collections that carry them.
 
@@ -170,12 +180,48 @@ def _error_bars(axes: Any) -> tuple[dict[int, dict[str, Any]], set[int]]:
     for container in getattr(axes, "containers", []):
         if type(container).__name__ != "ErrorbarContainer":
             continue
+        # `has_xerr`/`has_yerr` say which axes carry the magnitudes. Without them
+        # `container[2][0]` is whichever collection came first, so an x-errorbar
+        # was read as a y-errorbar of length zero (its segments have no vertical
+        # extent) and a figure with both was refused because the *y* collection
+        # looked unsupported under a wrong name.
+        has_xerr = bool(getattr(container, "has_xerr", False))
+        has_yerr = bool(getattr(container, "has_yerr", False))
+        if not has_xerr and not has_yerr:  # pragma: no cover - pre-3.5 matplotlib
+            has_xerr, has_yerr = len(container) > 2 and len(container[2]) > 1, True
+        if has_xerr:
+            raise ValueError(
+                "figspec cannot represent a horizontal error bar (`xerr`); its "
+                "error bars are vertical. Refusing rather than turning the "
+                "magnitudes into vertical bars"
+            )
+        if not has_yerr:
+            continue
         data_line = container.lines[0]
         yerr = container[2] if len(container) > 2 else None
-        magnitudes = yerr[0] if isinstance(yerr, tuple) and yerr else yerr
+        magnitudes = yerr[-1] if isinstance(yerr, tuple) and yerr else yerr
         if magnitudes is None:
             continue
         accounted.add(id(magnitudes))
+        # `capsize` adds two cap `Line2D`s to `axes.get_lines()`. They belong to
+        # this container, not to the figure; converting them drew two extra line
+        # marks through the caps (measured: a two-point error bar became three
+        # marks, so the converted figure had lines the source never had).
+        # `container.lines` is `(data_line, cap_lines, bar_collections)`, so the
+        # caps are the *elements* of `lines[1]`, not `lines[1]` itself.
+        for cap in tuple(container.lines[1]) if len(container.lines) > 1 else ():
+            accounted.add(id(cap))
+        if data_line is None:
+            # `errorbar(..., fmt="none")` draws only the bars: `lines[0]` is None
+            # and `None.get_xydata()` was an AttributeError rather than a
+            # conversion. The model has no error-bars-only mark, so this is
+            # refused for the same reason as any other unsupported construct.
+            raise ValueError(
+                "figspec cannot represent error bars with no data line "
+                "(`errorbar(..., fmt='none')`); the model's marks all draw a line "
+                "or points, so the errors would arrive with a line the figure "
+                "does not have"
+            )
         centres = [float(y) for _, y in data_line.get_xydata()]
         symmetric: list[float] = []
         asymmetric: list[list[float]] = []
@@ -217,19 +263,33 @@ def _bar_marks(axes: Any) -> list[dict[str, Any]]:
     if not containers:
         return []
 
-    widths = {
-        float(getattr(list(container.patches)[0], "get_width", lambda: 1.0)())
-        for container in containers
-    }
+    thick = [float(patch.get_width()) for container in containers for patch in container.patches]
+    tall = [float(patch.get_height()) for container in containers for patch in container.patches]
+    lefts = [float(patch.get_x()) for container in containers for patch in container.patches]
+    bottoms = [float(patch.get_y()) for container in containers for patch in container.patches]
+
+    # A `barh` puts the categories on y and the values in the patch *widths*, so
+    # its bars are the other way round. `abs(get_y()) > 1e-9` alone called that a
+    # stacked bar chart, which is a different construct, with a message naming it.
+    if (_spread(tall) < 1e-9 and _spread(thick) > 1e-9) or (
+        all(abs(left) < 1e-9 for left in lefts) and any(abs(bottom) > 1e-9 for bottom in bottoms)
+    ):
+        raise ValueError(
+            "figspec cannot represent a horizontal bar chart (`barh`); the model's "
+            "bars are vertical. Refusing rather than rotating the figure"
+        )
     lengths = {len(container.patches) for container in containers}
     if len(lengths) != 1:
         raise ValueError(
             "figspec cannot represent bar groups with a different number of bars "
             "in each group"
         )
-    if len(widths) != 1:
+    # Measured widths, not `set(...) == 1`: the `x ± width/2` idiom yields `0.4`
+    # and `0.4000000000000001`, so a canonical grouped bar was refused as bars
+    # "whose bars differ in width".
+    if _spread(thick) > 1e-9:
         raise ValueError("figspec cannot represent bar groups whose bars differ in width")
-    width = widths.pop()
+    width = thick[0]
     per_group = lengths.pop()
 
     for container in containers:
@@ -256,7 +316,24 @@ def _bar_marks(axes: Any) -> list[dict[str, Any]]:
                 "figspec cannot represent bars that are not side by side as one "
                 "group; refusing rather than pairing unrelated bars"
             )
-        category, found = _category_at(axes, sum(centres) / len(centres), limit=width)
+        # Two `bar` calls at the *same* positions are two overlapping bars, not a
+        # group: the positions are identical, so the guard above never trips and
+        # the overlapping chart was converted into side-by-side bars.
+        if len(centres) > 1 and max(centres) - min(centres) < 1e-9:
+            raise ValueError(
+                "figspec cannot represent two bar charts at the same positions; "
+                "reading them as one group would draw them side by side instead "
+                "of on top of each other"
+            )
+        # The tolerance is a fraction of a step, not the bar width: with `width`,
+        # a bar half a step off its tick was still named by that tick (measured:
+        # `bar([0.5, 1.5, 2.5], ...)` with ticks at 0/1/2 became categories
+        # `a`/`b`/`c`).
+        category, found = _category_at(
+            axes,
+            sum(centres) / len(centres),
+            limit=max(1e-9, min(abs(width) / 2.0, 0.25)),
+        )
         if not found:
             raise ValueError(
                 "figspec cannot represent bars that do not sit on tick labels; the "
@@ -455,6 +532,9 @@ def _marks(axes: Any) -> list[dict[str, Any]]:
     unsupported: list[str] = []
 
     for line in axes.get_lines():
+        if id(line) in accounted:
+            # A cap from an error bar, not a line the figure draws.
+            continue
         mark: dict[str, Any] = {
             "kind": "line",
             "points": _points(line),
@@ -469,6 +549,22 @@ def _marks(axes: Any) -> list[dict[str, Any]]:
             continue
         name = type(collection).__name__
         if name == "PathCollection":
+            # A scatter whose points differ in size or colour encodes a second and
+            # a third value with no axis. The model carries one size and one
+            # colour, so carrying this would drop the encoding (measured: `s=[…]`
+            # and `c=[…], cmap=…` both vanished while the figure looked complete).
+            sizes = [float(value) for value in collection.get_sizes()]
+            if sizes and (_spread(sizes) > 1e-9 or abs(sizes[0] - 36.0) > 1e-9):
+                raise ValueError(
+                    "figspec cannot represent a scatter whose point sizes encode a "
+                    "value; the model draws every scatter point at one size"
+                )
+            rows = [list(row) for row in collection.get_facecolor().reshape(-1, 4)]
+            if collection.get_array() is not None or any(row != rows[0] for row in rows):
+                raise ValueError(
+                    "figspec cannot represent a scatter whose colours encode a "
+                    "value; the model draws every scatter point in one colour"
+                )
             # A scatter: the offsets are the points, the colour is one value.
             marks.append(
                 {
@@ -573,6 +669,38 @@ def from_matplotlib(figure: Any, *, axes_index: int = 0) -> Model:
             "figspec cannot represent an image on a log y axis; its heatmap's rows "
             "are categorical"
         )
+    if not has_matrix:
+        # An inverted axis is not a model that can be carried: the points keep
+        # their values but the figure means the opposite, and reading `y_min` from
+        # an inverted axis (it is the *top* limit) reported a truncated baseline at
+        # the top of a chart that hangs downward (measured: bars of 3 and 4 with
+        # `invert_yaxis()` became `y_min: 4.2`). An image's y limits are the cell
+        # grid in either order, so this does not apply to a matrix.
+        if axes.xaxis_inverted():
+            raise ValueError(
+                "figspec cannot represent an inverted x axis; the model's x axis "
+                "runs the other way, and dropping the inversion would convert the "
+                "figure into a different one"
+            )
+        low_limit, high_limit = axes.get_ylim()
+        if low_limit > high_limit:
+            raise ValueError(
+                "figspec cannot represent an inverted y axis; the model's y axis "
+                "runs upward, and its limits are read as a truncated baseline"
+            )
+        # A twin axes shares the x range and the position, so it is not a second
+        # subplot: only the chosen axes can be read and the rest of the chart would
+        # be dropped silently (measured: `twinx().plot(...)` disappeared).
+        for other in axes_list:
+            if other is axes:
+                continue
+            if axes.get_shared_x_axes().joined(axes, other) and list(
+                other.get_position().bounds
+            ) == list(axes.get_position().bounds):
+                raise ValueError(
+                    "figspec cannot represent twin axes (`twinx`); the model has one "
+                    "y axis, so the second series would be dropped silently"
+                )
     model: Model = Model(
         {
             "marks": marks,

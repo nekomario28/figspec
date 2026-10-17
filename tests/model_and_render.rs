@@ -391,3 +391,129 @@ fn the_axis_covers_the_error_bars_it_draws() {
         "the axis stops at {highest}, below the error bar"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A third review attacked the readers with documents built from the formats. The
+// tests below are its guards: each one fails on the state it was reported
+// against, and each names the *measured* mistake rather than the fix.
+// ---------------------------------------------------------------------------
+
+fn codes_of(figure: &Figure) -> Vec<String> {
+    inspect(figure)
+        .problems
+        .iter()
+        .map(|problem| problem.code.clone())
+        .collect()
+}
+
+#[test]
+fn a_log_axis_does_not_read_the_other_axes_values() {
+    // Measured: a line at x=0 with `y_scale: "log"` was refused as
+    // `non-positive-on-log-scale` — for a value on the x axis, which is linear.
+    // `values()` concatenated x and y, so either axis' values could be reported
+    // against the other's scale.
+    let mut on_y = Figure::new().with_mark(Mark::Line {
+        points: vec![[0.0, 5.0], [1.0, 6.0]],
+        y_err: None,
+        y_err_asymmetric: None,
+        color: None,
+        label: None,
+    });
+    on_y.y_scale = Scale::Log;
+    assert!(
+        !codes_of(&on_y).contains(&"non-positive-on-log-scale".to_string()),
+        "a zero on the linear x axis was reported against the log y axis: {:?}",
+        codes_of(&on_y)
+    );
+    // And the axis that *is* log still catches it, in both directions.
+    let mut bad_y = Figure::new().with_mark(Mark::Line {
+        points: vec![[1.0, 0.0], [2.0, 6.0]],
+        y_err: None,
+        y_err_asymmetric: None,
+        color: None,
+        label: None,
+    });
+    bad_y.y_scale = Scale::Log;
+    assert!(codes_of(&bad_y).contains(&"non-positive-on-log-scale".to_string()));
+    let mut bad_x = Figure::new().with_mark(Mark::Line {
+        points: vec![[0.0, 1.0], [2.0, 6.0]],
+        y_err: None,
+        y_err_asymmetric: None,
+        color: None,
+        label: None,
+    });
+    bad_x.x_scale = Scale::Log;
+    assert!(codes_of(&bad_x).contains(&"non-positive-on-log-scale".to_string()));
+    // And a zero on the *linear* axis stays silent when x is the log one: with the
+    // metrics concatenated this fires (the mutant `log-check-uses-both-axes`).
+    let mut zero_on_linear_y = Figure::new().with_mark(Mark::Line {
+        points: vec![[1.0, 0.0], [2.0, 6.0]],
+        y_err: None,
+        y_err_asymmetric: None,
+        color: None,
+        label: None,
+    });
+    zero_on_linear_y.x_scale = Scale::Log;
+    assert!(
+        !codes_of(&zero_on_linear_y).contains(&"non-positive-on-log-scale".to_string()),
+        "a zero on the linear y axis was reported against the log x axis: {:?}",
+        codes_of(&zero_on_linear_y)
+    );
+}
+
+#[test]
+fn an_empty_string_is_not_a_title_or_a_label() {
+    // `is_none()` treated `"title": ""` as present, so a blank header passed while
+    // the other route warned about it.
+    let mut blank = Figure::new().with_mark(Mark::Bar {
+        categories: vec!["a".to_string()],
+        values: vec![1.0],
+        color: None,
+        label: None,
+    });
+    blank.title = Some(String::new());
+    blank.x_label = Some(String::new());
+    blank.y_label = Some("value".to_string());
+    let codes = codes_of(&blank);
+    assert!(codes.contains(&"no-title".to_string()), "{codes:?}");
+    assert!(codes.contains(&"no-axis-label".to_string()), "{codes:?}");
+}
+
+#[test]
+fn a_canvas_with_no_extent_is_refused_at_the_reader() {
+    // `u32` accepts zero, so `"width": 0` was read and drawn as a 0-pixel-wide
+    // artifact while the other route refused the file.
+    for field in ["width", "height"] {
+        let text = format!(r#"{{"marks": [], "{field}": 0}}"#);
+        let error = Figure::from_json(&text, "probe.json").unwrap_err();
+        assert!(
+            error.to_string().contains(&format!("{field} is 0")),
+            "{field}: {error}"
+        );
+    }
+    // A real size is still read.
+    let read = Figure::from_json(r#"{"marks": [], "width": 1}"#, "probe.json").unwrap();
+    assert_eq!(read.width, Some(1));
+}
+
+#[test]
+fn the_truncated_baseline_message_names_the_axis_not_the_bars() {
+    // Bars drawn from 0 and entirely below a positive `y_min` are *cut*, not
+    // started at it; the old message stated the opposite mechanism.
+    let mut figure = Figure::new().with_mark(Mark::Bar {
+        categories: vec!["a".to_string()],
+        values: vec![-5.0],
+        color: None,
+        label: None,
+    });
+    figure.y_min = Some(1.0);
+    let message = inspect(&figure)
+        .problems
+        .iter()
+        .find(|problem| problem.code == "truncated-baseline")
+        .expect("the truncated baseline is reported")
+        .message
+        .clone();
+    assert!(message.contains("the y axis starts at 1"), "{message}");
+    assert!(!message.contains("bars start at"), "{message}");
+}

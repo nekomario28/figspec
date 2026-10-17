@@ -446,3 +446,127 @@ def test_the_readmes_transcript_matches_the_committed_example():
     report = figspec.inspect(model)
     assert (len(report), sum(1 for p in report if p["severity"] == "error")) == (problems, errors)
     assert [p["code"] for p in report][: len(codes)] == codes
+
+
+# ---------------------------------------------------------------------------
+# A third review attacked the matplotlib importer with figures built from
+# matplotlib. Below is each mistake it measured, as a test: a conversion that
+# dropped or invented something, and a refusal that fired on a figure the model
+# can hold. The phrase asserted is the *reason* the code gives, so a refusal
+# cannot pass by refusing the wrong thing.
+# ---------------------------------------------------------------------------
+
+REFUSALS = {
+    "x errors only": (
+        lambda plt, axes: axes.errorbar([1.0, 2.0], [3.0, 4.0], xerr=[0.1, 0.2]),
+        "horizontal error bar",
+    ),
+    "errors on both axes": (
+        lambda plt, axes: axes.errorbar(
+            [1.0, 2.0], [3.0, 4.0], xerr=[0.1, 0.2], yerr=[0.3, 0.4]
+        ),
+        "horizontal error bar",
+    ),
+    "error bars with no data line": (
+        lambda plt, axes: axes.errorbar([1.0, 2.0], [3.0, 4.0], yerr=[0.1, 0.2], fmt="none"),
+        "no data line",
+    ),
+    "horizontal bars": (lambda plt, axes: axes.barh(["a", "b", "c"], [3.0, 4.0, 5.0]), "barh"),
+    "an inverted y axis": (
+        lambda plt, axes: (axes.bar(["a", "b"], [3.0, 4.0]), axes.invert_yaxis()),
+        "inverted y axis",
+    ),
+    "an inverted x axis": (
+        lambda plt, axes: (axes.plot([1.0, 2.0], [3.0, 4.0]), axes.invert_xaxis()),
+        "inverted x axis",
+    ),
+    "two bar calls at the same positions": (
+        lambda plt, axes: [axes.bar([0.0, 1.0], [1.0, 2.0]), axes.bar([0.0, 1.0], [3.0, 4.0])],
+        "same positions",
+    ),
+    "bars between the tick labels": (
+        lambda plt, axes: (
+            axes.bar([0.5, 1.5, 2.5], [1.0, 2.0, 3.0]),
+            axes.set_xticks([0.0, 1.0, 2.0], ["a", "b", "c"]),
+        ),
+        "do not sit on tick labels",
+    ),
+    "a scatter whose sizes encode a value": (
+        lambda plt, axes: axes.scatter([1.0, 2.0, 3.0], [1.0, 2.0, 3.0], s=[100, 200, 300]),
+        "point sizes",
+    ),
+    "a scatter whose colours encode a value": (
+        lambda plt, axes: axes.scatter(
+            [1.0, 2.0, 3.0], [1.0, 2.0, 3.0], c=[10.0, 20.0, 30.0], cmap="viridis"
+        ),
+        "colours encode",
+    ),
+    "twin axes": (
+        lambda plt, axes: axes.twinx().plot([1.0, 2.0], [5.0, 6.0]),
+        "twin axes",
+    ),
+    "stacked bars": (
+        lambda plt, axes: [
+            axes.bar([0.0, 1.0], [1.0, 2.0]),
+            axes.bar([0.0, 1.0], [3.0, 4.0], bottom=[1.0, 2.0]),
+        ],
+        "stacked bar",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(REFUSALS))
+def test_from_matplotlib_refuses_these_with_the_right_reason(name):
+    figure, axes = _axes()
+    build, phrase = REFUSALS[name]
+    build(None, axes)
+    try:
+        with pytest.raises(ValueError, match=phrase):
+            figspec.from_matplotlib(figure)
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(figure)
+
+
+def test_from_matplotlib_converts_bar_groups_whose_widths_are_float_offsets():
+    # `x ± width/2` yields 0.4 and 0.4000000000000001, and comparing measured
+    # widths with a *set* refused a canonical grouped bar as bars "whose bars
+    # differ in width".
+    figure, axes = _axes()
+    positions = [0.0, 1.0, 2.0]
+    width = 0.4
+    axes.bar([x - width / 2 for x in positions], [1.0, 2.0, 3.0], width=width, label="one")
+    axes.bar([x + width / 2 for x in positions], [4.0, 5.0, 6.0], width=width, label="two")
+    model = figspec.from_matplotlib(figure)
+    assert [mark["kind"] for mark in model["marks"]] == ["grouped_bar"]
+    assert [series["values"] for series in model["marks"][0]["series"]] == [
+        [1.0, 2.0, 3.0],
+        [4.0, 5.0, 6.0],
+    ]
+
+
+def test_from_matplotlib_does_not_turn_error_bar_caps_into_lines():
+    # `capsize` adds two cap `Line2D`s to `axes.get_lines()`; each became a full
+    # line mark, so a two-point error bar converted into three marks.
+    figure, axes = _axes()
+    axes.errorbar([1.0, 2.0], [3.0, 4.0], yerr=[[0.1, 0.2], [0.3, 0.4]], capsize=4)
+    model = figspec.from_matplotlib(figure)
+    assert [mark["kind"] for mark in model["marks"]] == ["line"]
+    for measured, wanted in zip(model["marks"][0]["y_err_asymmetric"], [[0.1, 0.3], [0.2, 0.4]]):
+        assert measured == pytest.approx(wanted)
+
+
+def test_the_reader_refuses_a_canvas_with_no_extent():
+    # `u32` accepts zero, so a 0-pixel-wide artifact was drawn; the other route
+    # refuses the file, and now this one does too, at the reader.
+    # The model reader validates, so a degenerate canvas is refused wherever the
+    # model is used, not accepted here and refused later by the renderer.
+    for field in ("width", "height"):
+        with pytest.raises(ValueError, match=f"{field} is 0"):
+            figspec.inspect({"marks": [], field: 0})
+        with pytest.raises(ValueError, match=f"{field} is 0"):
+            figspec.render_svg({"marks": [], field: 0})
+    # A real size is still read and rendered.
+    drawn = {"marks": [{"kind": "line", "points": [[1.0, 2.0], [2.0, 3.0]]}], "width": 1}
+    assert figspec.render_svg(drawn).startswith("<svg")

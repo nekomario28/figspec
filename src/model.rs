@@ -130,6 +130,31 @@ impl Mark {
     ///
     /// Error magnitudes are deliberately excluded: they are distances, not values
     /// on the axis, so a log scale must not be asked to place them.
+    /// The x coordinates a mark draws, when it has numeric ones.
+    pub fn x_values(&self) -> Vec<f64> {
+        match self {
+            Mark::Line { points, .. } | Mark::Scatter { points, .. } => {
+                points.iter().map(|pair| pair[0]).collect()
+            }
+            _ => vec![],
+        }
+    }
+
+    /// The y values a mark draws: the second coordinate, or a bar's value.
+    pub fn y_values(&self) -> Vec<f64> {
+        match self {
+            Mark::Line { points, .. } | Mark::Scatter { points, .. } => {
+                points.iter().map(|pair| pair[1]).collect()
+            }
+            Mark::Bar { values, .. } => values.clone(),
+            Mark::GroupedBar { series, .. } => series
+                .iter()
+                .flat_map(|one| one.values.iter().copied())
+                .collect(),
+            Mark::Heatmap { values, .. } => values.iter().flatten().copied().collect(),
+        }
+    }
+
     pub fn values(&self) -> Vec<f64> {
         match self {
             Mark::Line { points, .. } | Mark::Scatter { points, .. } => points
@@ -241,7 +266,17 @@ impl Mark {
         match self {
             Mark::Line { points, .. } | Mark::Scatter { points, .. } => points.is_empty(),
             Mark::Bar { values, .. } => values.is_empty(),
-            Mark::GroupedBar { series, .. } => series.is_empty(),
+            // No categories and series full of empty rows both draw nothing. Testing
+            // only `series.is_empty()` let `{"categories": [], "series":
+            // [{"values": []}]}` pass as a figure while the other route called it
+            // empty, and `mismatched-lengths` agreed with it (0 == 0).
+            Mark::GroupedBar {
+                categories, series, ..
+            } => {
+                categories.is_empty()
+                    || series.is_empty()
+                    || series.iter().all(|one| one.values.is_empty())
+            }
             Mark::Heatmap { values, .. } => values.is_empty() || values.iter().any(Vec::is_empty),
         }
     }
@@ -319,7 +354,21 @@ fn at(where_: impl Into<String>, message: impl Into<String>) -> ModelError {
 impl Figure {
     /// Read a figure from JSON, refusing anything the model does not name.
     pub fn from_json(text: &str, where_: &str) -> Result<Self, ModelError> {
-        serde_json::from_str(text).map_err(|error| at(where_, error.to_string()))
+        let figure: Self =
+            serde_json::from_str(text).map_err(|error| at(where_, error.to_string()))?;
+        // A canvas with no extent is not a canvas. `u32` accepts zero, so this was
+        // read and drawn as a 0-pixel-wide artifact; the other route refuses the
+        // file, and refusing it here (rather than reporting it as a check) keeps the
+        // two readers agreeing on *how* a malformed figure is refused.
+        for (field, size) in [("width", figure.width), ("height", figure.height)] {
+            if size == Some(0) {
+                return Err(at(
+                    where_,
+                    format!("{field} is 0, expected a positive integer"),
+                ));
+            }
+        }
+        Ok(figure)
     }
 
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ModelError> {
@@ -351,7 +400,6 @@ impl Figure {
                 message: "the figure declares no marks, so there is nothing to read".to_string(),
             });
         }
-        let logged = matches!(self.x_scale, Scale::Log) || matches!(self.y_scale, Scale::Log);
         for (index, mark) in self.marks.iter().enumerate() {
             let values = mark.values();
             if let Some(bad) = values.iter().find(|value| !value.is_finite()) {
@@ -361,12 +409,28 @@ impl Figure {
                     message: format!("{} mark draws {bad}, which cannot be placed", mark.kind()),
                 });
             }
-            // A heatmap's cells are not values on the axis: the colour is the
-            // value, so a non-positive cell is not a log-axis problem. (A log
+            // A log axis is *one* axis. Concatenating x and y and testing the lot
+            // reported a non-positive x against a log y (measured: a line at x=0
+            // with `y_scale: "log"` was refused although its x axis is linear, and
+            // `render` refused with it).
+            //
+            // A heatmap's cells are not values on the axis either: the colour is
+            // the value, so a non-positive cell is not a log-axis problem. (A log
             // *scale* on a heatmap figure is refused above, because the engine
             // would apply it to the cells' positions.)
-            if logged && !matches!(mark, Mark::Heatmap { .. }) {
-                if let Some(bad) = values.iter().find(|value| **value <= 0.0) {
+            if !matches!(mark, Mark::Heatmap { .. }) {
+                // A log axis is *one* axis. Concatenating x and y and testing the lot
+                // reported a non-positive x against a log y (measured: a line at x=0
+                // with `y_scale: "log"` was refused although its x axis is linear).
+                // A heatmap is skipped entirely: its cells are not values on the
+                // axis, so a non-positive cell is not a log-axis problem.
+                let on_a_log_axis = match (self.x_scale, self.y_scale) {
+                    (Scale::Log, Scale::Log) => mark.values(),
+                    (Scale::Log, Scale::Linear) => mark.x_values(),
+                    (Scale::Linear, Scale::Log) => mark.y_values(),
+                    (Scale::Linear, Scale::Linear) => Vec::new(),
+                };
+                if let Some(bad) = on_a_log_axis.iter().find(|value| **value <= 0.0) {
                     refusals.push(Refusal {
                         code: "non-positive-on-log-scale",
                         mark: Some(index),
@@ -492,7 +556,10 @@ impl Figure {
         // canvas) and a log scale changes them (106.3 px). Drawing it anyway would
         // be a picture that follows an instruction it cannot honour, so it is
         // refused with the reason.
-        if self.y_min.is_some() || matches!(self.y_scale, Scale::Log) {
+        if self.y_min.is_some()
+            || matches!(self.y_scale, Scale::Log)
+            || matches!(self.x_scale, Scale::Log)
+        {
             for (index, mark) in self.marks.iter().enumerate() {
                 if matches!(mark, Mark::Heatmap { .. }) {
                     refusals.push(Refusal {
@@ -508,25 +575,35 @@ impl Figure {
         }
         // One pair of axes carries one set of labels. Two marks declaring
         // different names for the same axis cannot both be shown, and picking one
-        // would caption the other's data with the wrong names.
-        let declared: Vec<&Vec<String>> = self
-            .marks
-            .iter()
-            .filter_map(|mark| match mark {
-                Mark::Heatmap {
-                    row_labels: Some(labels),
-                    ..
-                } => Some(labels),
-                _ => None,
-            })
-            .collect();
-        if let Some(first) = declared.first() {
-            if declared.iter().any(|labels| *labels != *first) {
-                refusals.push(Refusal {
-                    code: "ambiguous-labels",
-                    mark: None,
-                    message: "two marks declare different row labels for the same axis".to_string(),
-                });
+        // would caption the other's data with the wrong names. Both axes are
+        // checked: the row-only version let two heatmaps name the *columns*
+        // differently and drew the second set of names over the first's data.
+        for (which, axis) in [("row", 0usize), ("column", 1usize)] {
+            let declared: Vec<&Vec<String>> = self
+                .marks
+                .iter()
+                .filter_map(|mark| match mark {
+                    Mark::Heatmap {
+                        row_labels,
+                        col_labels,
+                        ..
+                    } => match axis {
+                        0 => row_labels.as_ref(),
+                        _ => col_labels.as_ref(),
+                    },
+                    _ => None,
+                })
+                .collect();
+            if let Some(first) = declared.first() {
+                if declared.iter().any(|labels| *labels != *first) {
+                    refusals.push(Refusal {
+                        code: "ambiguous-labels",
+                        mark: None,
+                        message: format!(
+                            "two marks declare different {which} labels for the same axis"
+                        ),
+                    });
+                }
             }
         }
         refusals

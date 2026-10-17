@@ -206,6 +206,11 @@ stay numpy-free, so the renderer and the checks keep working without it.
   record, including the measurements each decision rests on.
 - [`AGENTS.md`](AGENTS.md) — the loop, for an agent working in this repository.
 
+## What has been attacked
+
+`docs/SEMANTICS.md` records the independent reviews of these claims: what was
+probed, what was found, and what the probe could not reach.
+
 ## What this is not
 
 - **Not a matplotlib-compatible API.** You do not port your plotting code to

@@ -26,6 +26,23 @@ figure cannot be drawn — which is not an input error in the strict sense, and 
 the one place where the two exit paths meet: a refusal the *checks* report makes
 `inspect` exit 1 and `render` exit 2.
 
+**The command line.** `figspec <inspect|storyboard|render|codes> …`. One model
+file, one `-o <path>` where the command writes something, `--json` for `inspect`.
+Anything else is refused by name, exit 2: a second model file, an unknown option, a
+flag the command cannot honour (`inspect -o …`, `render --json`), a missing model or
+`-o`. The model and `-o`'s value are told apart by *position*, so a model file named
+`chart.svg` is a model. `storyboard` writes SVG and refuses a path whose extension
+is not `.svg`, because the file would otherwise hold something other than what its
+name says.
+
+**The raster budget.** `render -o out.png` refuses, exit 2, a picture whose pixel
+buffer would exceed 16 000 000 pixels at density 2 — the canvas, and a marker whose
+coverage mask (`2*ceil(size/2*2 + 1.5) + 1` squared, the arithmetic the backend
+allocates) is larger than that. It is a limit of the *raster route*: the same figure
+renders to SVG, which has no pixel buffer, and `inspect` reports nothing about it,
+because a pixel budget is not a property of the figure. Values are computed in
+`f64` before the backend multiplies, so the limit is a refusal and not a panic.
+
 **The report.** `inspect` returns a list of problems, each with `code`, `severity`,
 `message`, and `mark` when the problem is about one mark (0-based). `--json` prints
 the same thing with a `problems` key. Keys are only ever added.
@@ -96,6 +113,12 @@ bars between the tick labels, error bars with no data line, horizontal error bar
 (`xerr`), twin axes, an inverted x or y axis. A figure that cannot be converted
 whole is not converted partly — measured: a `capsize` error bar once converted into
 three line marks, and `xerr` into vertical error bars of length zero.
+
+The command line is held to the same rule: an argument the command cannot honour is
+refused, not ignored, because a command that answers about something other than what
+it was given is worse than one that fails. Measured before: a typo'd `--jsonn`
+printed the human report with exit 0; `inspect a.json b.json` inspected `a.json` and
+never mentioned `b.json`; `storyboard -o out.png` wrote SVG to a path ending `.png`.
 
 `docs/SEMANTICS.md` records which claims were attacked and found sound, so the next
 review can differ from this one deliberately.

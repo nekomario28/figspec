@@ -123,6 +123,7 @@ Few on purpose. Each one says what is wrong, where, and what to do instead.
 | `non-positive-on-log-scale` | error | a log axis is asked to place zero or a negative value |
 | `two-error-shapes` | error | a mark declares symmetric and asymmetric error bars at once |
 | `negative-error` | error | an error magnitude is negative, which is not a distance |
+| `negative-size` | error | a marker size is negative, which is not a length |
 | `empty-figure` | error | the figure declares no marks |
 | `empty-mark` | error | a mark declares nothing to draw, so it would render as nothing |
 | `short-line` | error | a line has fewer than two points, so there is no line to draw |

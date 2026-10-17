@@ -113,6 +113,11 @@ pub const CODEBOOK: &[(&str, &str, &str)] = &[
         "an error magnitude is negative, which is not a distance",
     ),
     (
+        "negative-size",
+        ERROR,
+        "a marker size is negative, which is not a length",
+    ),
+    (
         "no-title",
         WARN,
         "the figure has no title, so a reader cannot tell what it shows",

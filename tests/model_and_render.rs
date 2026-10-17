@@ -227,6 +227,24 @@ fn a_negative_error_magnitude_is_an_error() {
 }
 
 #[test]
+fn a_negative_marker_size_is_an_error() {
+    // A length, so a negative one is not a length — measured, it used to be
+    // accepted, inspected clean and drawn with a size the renderer chose.
+    let figure = Figure::new()
+        .with_title("negative")
+        .with_mark(Mark::Scatter {
+            points: vec![[0.0, 1.0], [1.0, 2.0]],
+            y_err: None,
+            y_err_asymmetric: None,
+            size: Some(-5.0),
+            color: None,
+            label: None,
+        });
+    assert_eq!(inspect(&figure).problems[0].code, "negative-size");
+    assert_eq!(inspect(&figure).exit_code(), 1);
+}
+
+#[test]
 fn declaring_both_error_shapes_is_refused_once() {
     let figure = Figure::new()
         .with_title("both")
@@ -299,6 +317,7 @@ fn the_codebook_names_every_code_the_checks_emit() {
         "non-positive-on-log-scale",
         "two-error-shapes",
         "negative-error",
+        "negative-size",
         "no-title",
         "no-axis-label",
     ];

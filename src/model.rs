@@ -533,6 +533,24 @@ impl Figure {
                     message: format!("{} mark has a negative error magnitude", mark.kind()),
                 });
             }
+            // A marker size is a *length*, and the same rule a negative error
+            // magnitude is refused by applies to it: measured, `size: -5` was
+            // accepted, inspected clean and drawn — a declaration with no meaning,
+            // and the renderer chose one for it.
+            if let Mark::Scatter {
+                size: Some(size), ..
+            } = mark
+            {
+                if *size < 0.0 {
+                    refusals.push(Refusal {
+                        code: "negative-size",
+                        mark: Some(index),
+                        message: format!(
+                            "scatter mark has a marker size of {size}, which is not a length"
+                        ),
+                    });
+                }
+            }
             if let Some(categories) = mark.categories() {
                 for (series_index, length) in mark.values_per_category().iter().enumerate() {
                     if *length != categories.len() {

@@ -95,3 +95,77 @@ partial tick labels.
 at parse, so no readable model holds one (`chartgx`, whose reader is Python's
 `json.loads`, accepts the same file — recorded above as a route difference).
 `docgx`-style claims with no observable surface were not attacked.
+
+## Fourth review: the input boundary, in both build profiles
+
+The third review read the *model*; this one aimed at a class it could not see: a
+declaration the model accepts, that reaches the raster backend, and makes it panic —
+exit 101 with a Rust backtrace, where this project's own policy says exit 2 for a
+figure it cannot draw. 59 models (29 malformed, 28 valid but extreme) were run
+through every command — `inspect --json`, `storyboard`, `render -o *.svg`,
+`render -o *.png` — in **both build profiles**, because a wrapped arithmetic behaves
+differently in each.
+
+### A panic where a refusal belongs
+
+| the model declared | debug build | release build |
+| --- | --- | --- |
+| `"width": 4294967295, "height": 4294967295` (a `u32`, so the model accepted it) | `render -o x.png` exit 101, `attempt to multiply with overflow` at kuva `backend/raster.rs` | exit 101, `capacity overflow` |
+| `{"kind":"scatter","points":[[0,0]],"size":1e308}` (also `1e9`) | `render -o x.png` exit 101, `attempt to multiply with overflow` at `raster.rs` | **exit 0, and a written PNG** — the mask size had wrapped |
+
+The second row is the one worth keeping: in the build that ships, a marker length
+that cannot be drawn was drawn anyway, silently. Both routes are the same budget —
+`Canvas::new` allocates `w*h*4` bytes in `u32`; `make_circle_mask` allocates
+`(2*ceil(r + 1.5) + 1)²` — so both are now refused in `f64` before the backend
+multiplies, naming the declaration:
+
+```
+figspec: a PNG is 8589934592x8589934592 pixels at density 2, above the 16000000-pixel
+raster limit; render an SVG, which has no pixel buffer, or declare a smaller width/height
+figspec: marks[0].size 1e9 cannot be drawn: 2000000005x2000000005 pixels at density 2 is
+above the 16000000-pixel raster limit; the SVG has no such buffer
+figspec: marks[0].size 1e308 cannot be drawn: its coverage mask is not a finite size; the
+SVG has no such buffer
+```
+
+The bound is the 16 000 000 pixels `shadergx` uses for the same kind of buffer. The
+SVG route still draws both, deliberately — it allocates no pixels — and `inspect`
+reports nothing about either, because a pixel budget is a property of the route and
+not of the figure. `tests/raster.rs` pins both directions and both boundaries: at
+density 2 a 2000x2000 canvas draws and 2001x2000 does not, and a 1997-point marker
+draws while 1998 does not, from the backend's own arithmetic rather than a round
+number.
+
+### A command that answered about something else
+
+| what was run | what it did |
+| --- | --- |
+| `storyboard m.json -o out.png` | exit 0, and **SVG contents** in a file named `.png` |
+| `inspect a.json b.json` | inspected `a.json`; `b.json` was never mentioned |
+| `inspect m.json --oops` (a typo'd `--json`) | the human report, exit 0 |
+| `render chart.svg -o out.svg` | "render needs a model file", about a file that was there |
+| `{"size": -5}` | clean, and drawn with a size the renderer chose |
+
+The fourth is why the others existed: the model and `-o`'s value were told apart by
+their *extensions* (`find(|arg| !arg.ends_with(".svg"))`), and the same hack swallowed
+a second positional argument and an unknown flag. One parser now — one model, one
+`-o`, `--json` for `inspect`, everything else refused by name with exit 2 — and
+`storyboard` refuses a non-`.svg` extension the way `render` refuses anything but
+`.svg`/`.png`. A negative marker size is a length that is not a length, so it is
+refused like a negative error magnitude: `negative-size`, a new error code, reported
+by `inspect` and refused by the renderer through the one list they share.
+
+### Attacked and found sound
+
+The other 54 probed models: ragged matrices, empty marks, one-point lines, a heatmap
+with `y_min` and a log axis, mismatched label counts, `NaN`/infinite coordinates, a
+`u32::MAX` canvas on the SVG route, coordinates at 1e308, an empty figure, an unknown
+mark kind, unknown fields, a directory in place of a model, an unwritable output
+path. Each was reported or refused, exit 0/1/2, in both build profiles, with no panic
+in either.
+
+### Recorded, not changed
+
+`render -o -` writes a file named `-`; stdout is not an output of these commands, and
+a second way to get the bytes was not added. `inspect` calls a `u32::MAX` canvas
+clean — the raster budget is the route's, and the SVG route honours the declaration.

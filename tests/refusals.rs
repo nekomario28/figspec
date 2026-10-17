@@ -60,6 +60,33 @@ fn broken() -> Vec<(&'static str, Figure, &'static str)> {
         .with_mark(bar(vec!["a"], vec![0.0]));
     logged.y_scale = Scale::Log;
     vec![
+        (
+            // A marker size is a length, and a negative one is the same fault a
+            // negative error magnitude is: the renderer used to pick a size for it
+            // and draw it, and the report called it clean.
+            "negative marker size",
+            Figure::new().with_mark(Mark::Scatter {
+                points: vec![[0.0, 1.0]],
+                y_err: None,
+                y_err_asymmetric: None,
+                size: Some(-5.0),
+                color: None,
+                label: None,
+            }),
+            "negative-size",
+        ),
+        (
+            "negative error magnitude",
+            Figure::new().with_mark(Mark::Scatter {
+                points: vec![[0.0, 1.0]],
+                y_err: Some(vec![-0.5]),
+                y_err_asymmetric: None,
+                size: None,
+                color: None,
+                label: None,
+            }),
+            "negative-error",
+        ),
         ("no marks", Figure::new(), "empty-figure"),
         (
             "empty scatter",

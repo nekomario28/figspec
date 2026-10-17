@@ -39,6 +39,92 @@ fn refuse(message: impl Into<String>) -> RenderError {
 
 const DEFAULT_COLOR: &str = "steelblue";
 
+/// The largest pixel buffer the raster route will allocate.
+///
+/// The same 16 000 000 pixels `shadergx` renders a shader canvas at — one number
+/// for the family, because it is the same kind of budget (4 bytes a pixel, held
+/// while the picture is drawn).
+const MAX_RASTER_PIXELS: f64 = 16_000_000.0;
+
+/// The retina density a PNG is drawn at, as a multiplier on the canvas. A
+/// rendering choice, not a model property, so it stays out of the model and out
+/// of the checks.
+const DENSITY: f32 = 2.0;
+
+/// The side of the coverage mask the raster backend builds for a marker of
+/// `size` points, in its own terms.
+///
+/// `make_circle_mask` takes `half = ceil(r + 1.5)` and allocates `(2*half+1)²`
+/// bytes, where `r` is the radius in *scaled* pixels (`size/2 * density`).
+/// Mirrored here so the refusal is about the arithmetic that actually allocates.
+fn mask_side(size: f64) -> f64 {
+    let radius = size / 2.0 * f64::from(DENSITY);
+    2.0 * (radius + 1.5).ceil() + 1.0
+}
+
+/// Refuse a picture the raster backend cannot hold, before it panics trying.
+///
+/// Measured: `width`/`height` of 4 294 967 295 — a `u32`, so the model accepted
+/// it — reached the backend, which multiplies the canvas by the density and
+/// allocates `w*h*4` bytes **in `u32`**. Debug builds panicked at
+/// `attempt to multiply with overflow`, release builds at `capacity overflow`,
+/// both exit 101 with a Rust backtrace; the same figure rendered to SVG, which
+/// has no pixel buffer. And a marker `size` of 1e9 panicked in debug while the
+/// *release* build wrapped the mask size and drew an image nobody declared — the
+/// silent disagreement this library exists to prevent. Both are the same budget,
+/// so both are refused here, in `f64`, naming the declaration.
+fn check_raster_budget(
+    figure: &Figure,
+    scene_width: f64,
+    scene_height: f64,
+) -> Result<(), RenderError> {
+    // `width` and `height` are `u32`s rendered through `f32`, so they are finite;
+    // the product is the thing that is not.
+    let width = (scene_width as f32 * DENSITY).ceil() as f64;
+    let height = (scene_height as f32 * DENSITY).ceil() as f64;
+    if width * height > MAX_RASTER_PIXELS {
+        return Err(refuse(format!(
+            "a PNG is {width:.0}x{height:.0} pixels at density {DENSITY}, above the \
+             {MAX_RASTER_PIXELS:.0}-pixel raster limit; render an SVG, which has no pixel \
+             buffer, or declare a smaller width/height"
+        )));
+    }
+    let largest = figure
+        .marks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, mark)| match mark {
+            Mark::Scatter {
+                size: Some(size), ..
+            } => Some((index, *size)),
+            _ => None,
+        })
+        .max_by(|left, right| left.1.total_cmp(&right.1));
+    if let Some((index, size)) = largest {
+        let side = mask_side(size);
+        // `size` is a `f64` a caller can set to infinity, and `side * side` can
+        // overflow to it for a merely huge one, so both are checked — either way
+        // there is no mask, and the backend would have wrapped or panicked.
+        if !side.is_finite() || side * side > MAX_RASTER_PIXELS {
+            // Two ways to have no mask, and the message says which: a side this
+            // route computed and found too big, or a side that is not a number at
+            // all (an infinite `size`, which JSON cannot carry but a caller can).
+            let drawn = if side.is_finite() {
+                format!(
+                    "{side:.0}x{side:.0} pixels at density {DENSITY} is above the \
+                     {MAX_RASTER_PIXELS:.0}-pixel raster limit"
+                )
+            } else {
+                "its coverage mask is not a finite size".to_string()
+            };
+            return Err(refuse(format!(
+                "marks[{index}].size {size:e} cannot be drawn: {drawn}; the SVG has no such buffer"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
     // The same list the checks report, so a rule cannot hold in `inspect` and be
     // ignored here: a short error array used to render with the extra point's bar
@@ -324,7 +410,13 @@ pub fn to_svg(figure: &Figure) -> Result<String, RenderError> {
 /// The figure as a PNG.
 pub fn to_png(figure: &Figure) -> Result<Vec<u8>, RenderError> {
     let (plots, layout) = geometry(figure)?;
-    // 2.0 is the engine's retina density; it is a rendering choice, not a model
-    // property, so it stays out of the model and out of the checks.
-    kuva::render_to_png(plots, layout, 2.0).map_err(|error| refuse(format!("png: {error}")))
+    // The scene is built here rather than through `render_to_png` so the size the
+    // backend will multiply is the size that gets checked — one arithmetic, not a
+    // second guess at what the layout's missing width defaults to.
+    let scene = kuva::render::render::render_multiple(plots, layout);
+    check_raster_budget(figure, scene.width, scene.height)?;
+    kuva::backend::png::PngBackend::new()
+        .with_scale(DENSITY)
+        .render_scene(&scene)
+        .map_err(|error| refuse(format!("png: {error}")))
 }

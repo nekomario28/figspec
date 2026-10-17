@@ -10,5 +10,5 @@ renderer, and without executing anything to inspect it.
 - figspec render model.json -o chart.svg|chart.png
 - figspec storyboard model.json -o chart.storyboard.svg — the figure with a numbered box on every mark a problem names; the numbers are the positions in the inspect report
 - Python: figspec.inspect(model), figspec.render_svg(model), figspec.render_png(model), figspec.storyboard_svg(model), figspec.save(model, path), figspec.from_matplotlib(figure)
-- Codes: truncated-baseline (error, one per categorical mark), mismatched-lengths (error), non-finite-value (error), non-positive-on-log-scale (error), empty-figure (error), empty-mark (error), short-line (error), ambiguous-labels (error), no-title (warn), no-axis-label (info)
+- Codes: truncated-baseline (error, one per categorical mark), mismatched-lengths (error), negative-error (error), negative-size (error), non-finite-value (error), non-positive-on-log-scale (error), empty-figure (error), empty-mark (error), short-line (error), ambiguous-labels (error), no-title (warn), no-axis-label (info)
 - Unknown fields are refused, not ignored. matplotlib is an optional importer, never a dependency. The drawing is kuva's (MIT); figspec owns the model and the checks.

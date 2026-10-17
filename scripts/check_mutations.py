@@ -325,6 +325,61 @@ def mutations() -> list[Mutation]:
                 ["tests_python/test_figspec.py", "-k", "what_the_converter_refuses"],
                 python=True,
             ),
+            # The raster budget and the command line: seven rules, each of which was
+            # a panic, a silent mis-write or a silently ignored argument before.
+            Mutation(
+                "raster-canvas-budget-unchecked",
+                "src/render.rs",
+                "    if width * height > MAX_RASTER_PIXELS {",
+                "    if false {",
+                ["--test", "raster", "a_canvas_the_raster_cannot_hold_is_refused_by_name"],
+            ),
+            Mutation(
+                "raster-marker-budget-unchecked",
+                "src/render.rs",
+                "        if !side.is_finite() || side * side > MAX_RASTER_PIXELS {",
+                "        if false {",
+                ["--test", "raster", "a_marker_the_raster_cannot_hold_is_refused_by_name"],
+            ),
+            Mutation(
+                "raster-mask-side-simplified",
+                "src/render.rs",
+                "    2.0 * (radius + 1.5).ceil() + 1.0",
+                "    2.0 * radius + 1.0",
+                ["--test", "raster", "the_marker_budget_is_the_mask_the_backend_allocates"],
+            ),
+            Mutation(
+                "second-model-ignored",
+                "src/bin/figspec.rs",
+                "                if flags.model.is_some() {",
+                "                if false {",
+                ["--test", "cli", "a_second_model_file_is_refused_rather_than_ignored"],
+            ),
+            Mutation(
+                "unknown-option-ignored",
+                "src/bin/figspec.rs",
+                '                return Err(format!("unknown option {other:?}; try `figspec --help`"));',
+                "                index += 1;",
+                ["--test", "cli", "an_unknown_option_is_refused_rather_than_ignored"],
+            ),
+            Mutation(
+                "storyboard-extension-unchecked",
+                "src/bin/figspec.rs",
+                '    if !matches!(extension.as_str(), "" | "svg") {',
+                "    if false {",
+                [
+                    "--test",
+                    "cli",
+                    "a_storyboard_refuses_a_path_that_would_lie_about_what_it_holds",
+                ],
+            ),
+            Mutation(
+                "negative-marker-size-accepted",
+                "src/model.rs",
+                "                if *size < 0.0 {",
+                "                if false {",
+                ["--test", "refusals", "everything_that_cannot_be_drawn_is_reported_as_an_error"],
+            ),
         ]
     )
     return cases

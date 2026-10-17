@@ -85,7 +85,8 @@ pub fn inspect(figure: &Figure) -> Report {
                         "truncated-baseline",
                         ERROR,
                         format!(
-                            "bars start at y={min}, not 0, so their lengths no longer mean their values"
+                            "the y axis starts at {min}, not 0, so the bars' lengths no \
+                             longer mean their values"
                         ),
                         Some(index),
                     ));
@@ -94,7 +95,9 @@ pub fn inspect(figure: &Figure) -> Report {
         }
     }
 
-    if figure.title.is_none() {
+    // An empty string is not a title. `is_none()` let `"title": ""` count as
+    // present, so a page with a blank header passed while the other route warned.
+    if figure.title.as_deref().is_none_or(str::is_empty) {
         problems.push(problem(
             "no-title",
             WARN,
@@ -103,7 +106,7 @@ pub fn inspect(figure: &Figure) -> Report {
         ));
     }
     for (label, which) in [(&figure.x_label, "x"), (&figure.y_label, "y")] {
-        if label.is_none() {
+        if label.as_deref().is_none_or(str::is_empty) {
             problems.push(problem(
                 "no-axis-label",
                 INFO,

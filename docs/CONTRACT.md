@@ -90,6 +90,16 @@ approximating: a colour image, a masked cell, a non-linear norm, an image drawn
 over an explicit `extent`, a partial set of tick labels, a stacked bar, a contour
 or violin set.
 
+`from_matplotlib` refuses the same way, and its refusals name the construct: a
+colour-mapped or size-encoded scatter, `barh`, two bar calls at the same positions,
+bars between the tick labels, error bars with no data line, horizontal error bars
+(`xerr`), twin axes, an inverted x or y axis. A figure that cannot be converted
+whole is not converted partly — measured: a `capsize` error bar once converted into
+three line marks, and `xerr` into vertical error bars of length zero.
+
+`docs/SEMANTICS.md` records which claims were attacked and found sound, so the next
+review can differ from this one deliberately.
+
 ## What this is not
 
 - **Not a matplotlib-compatible API.** You do not port plotting code to figspec;

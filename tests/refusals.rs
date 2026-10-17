@@ -80,6 +80,53 @@ fn broken() -> Vec<(&'static str, Figure, &'static str)> {
             "empty-mark",
         ),
         (
+            // No categories *and* no values: `series.is_empty()` alone said this
+            // drew something, and `mismatched-lengths` agreed (0 == 0), so a
+            // figure that draws nothing passed as clean.
+            "grouped bar with no categories",
+            Figure::new().with_mark(Mark::GroupedBar {
+                categories: Vec::new(),
+                series: vec![Series {
+                    values: Vec::new(),
+                    label: None,
+                    color: None,
+                }],
+            }),
+            "empty-mark",
+        ),
+        (
+            "grouped bar whose series carry no values",
+            Figure::new().with_mark(Mark::GroupedBar {
+                categories: vec!["a".to_string()],
+                series: vec![Series {
+                    values: Vec::new(),
+                    label: None,
+                    color: None,
+                }],
+            }),
+            "empty-mark",
+        ),
+        (
+            // Both axes are named, so both must agree with themselves.
+            "two heatmaps name the columns differently",
+            Figure::new()
+                .with_mark(Mark::Heatmap {
+                    values: vec![vec![1.0, 2.0]],
+                    row_labels: None,
+                    col_labels: Some(vec!["a".to_string(), "b".to_string()]),
+                    color_map: None,
+                    label: None,
+                })
+                .with_mark(Mark::Heatmap {
+                    values: vec![vec![3.0, 4.0]],
+                    row_labels: None,
+                    col_labels: Some(vec!["c".to_string(), "d".to_string()]),
+                    color_map: None,
+                    label: None,
+                }),
+            "ambiguous-labels",
+        ),
+        (
             "empty matrix",
             Figure::new().with_mark(heat(Vec::new())),
             "empty-mark",

@@ -98,6 +98,16 @@ pub const CODEBOOK: &[(&str, &str, &str)] = &[
         "bars start above zero, so their lengths no longer mean their values",
     ),
     (
+        "overlapping-bars",
+        ERROR,
+        "filled bars in separate marks overlap in the same category slots",
+    ),
+    (
+        "unwritable-character",
+        ERROR,
+        "a declared string contains a character XML does not allow in a document",
+    ),
+    (
         "non-positive-on-log-scale",
         ERROR,
         "a log axis is asked to place zero or a negative value",

@@ -60,3 +60,21 @@ fn the_link_checker_finds_links_and_skips_what_it_cannot_check() {
     );
     assert!(relative_targets("no links here").is_empty());
 }
+
+#[test]
+fn the_agent_code_list_matches_the_codebook() {
+    // An agent branches on this advertised set. A partial list silently hides
+    // findings even though both the implementation and the README know them.
+    let text = std::fs::read_to_string(root().join("llms.txt")).unwrap();
+    let line = text
+        .lines()
+        .find_map(|line| line.strip_prefix("- Codes: "))
+        .unwrap();
+    let listed: std::collections::BTreeSet<_> = line
+        .split(|c: char| !(c.is_ascii_lowercase() || c == '-'))
+        .filter(|word| word.contains('-'))
+        .collect();
+    let known: std::collections::BTreeSet<_> =
+        figspec::CODEBOOK.iter().map(|(code, _, _)| *code).collect();
+    assert_eq!(listed, known);
+}

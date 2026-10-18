@@ -288,6 +288,57 @@ impl Mark {
             _ => vec![],
         }
     }
+
+    /// Every string this mark declares, with the field it came from.
+    ///
+    /// One list, so a rule about text covers all of it rather than the field a
+    /// review happened to remember: a mark label, a category, a series label,
+    /// and the names a heatmap puts on its axes.
+    fn text_fields(&self) -> Vec<(String, &str)> {
+        let mut fields: Vec<(String, &str)> = Vec::new();
+        let (label, color) = match self {
+            Mark::Line { label, color, .. }
+            | Mark::Scatter { label, color, .. }
+            | Mark::Bar { label, color, .. } => (label.as_deref(), color.as_deref()),
+            Mark::Heatmap { label, .. } => (label.as_deref(), None),
+            Mark::GroupedBar { .. } => (None, None),
+        };
+        for (name, text) in [("label", label), ("color", color)] {
+            if let Some(text) = text {
+                fields.push((name.to_string(), text));
+            }
+        }
+        if let Some(categories) = self.categories() {
+            fields.extend(
+                categories
+                    .iter()
+                    .map(|name| ("categories".to_string(), name.as_str())),
+            );
+        }
+        if let Mark::GroupedBar { series, .. } = self {
+            for (index, one) in series.iter().enumerate() {
+                if let Some(label) = one.label.as_deref() {
+                    fields.push((format!("series[{index}].label"), label));
+                }
+                if let Some(color) = one.color.as_deref() {
+                    fields.push((format!("series[{index}].color"), color));
+                }
+            }
+        }
+        if let Mark::Heatmap {
+            row_labels,
+            col_labels,
+            ..
+        } = self
+        {
+            for (name, labels) in [("row_labels", row_labels), ("col_labels", col_labels)] {
+                if let Some(labels) = labels {
+                    fields.extend(labels.iter().map(|text| (name.to_string(), text.as_str())));
+                }
+            }
+        }
+        fields
+    }
 }
 
 /// A chart, as data.
@@ -327,6 +378,38 @@ pub struct Refusal {
     pub code: &'static str,
     pub mark: Option<usize>,
     pub message: String,
+}
+
+/// Whether XML allows `character` in a document at all.
+///
+/// This is the XML 1.0 `Char` production, not a judgement about taste: a document
+/// containing anything else is not well-formed, so no reader opens it. Tab,
+/// newline and carriage return are the only control characters allowed, U+FFFE
+/// and U+FFFF are excluded, and a surrogate is not a `char` in Rust to begin
+/// with. SVG and raster routes share this declared-text contract.
+fn xml_allows(character: char) -> bool {
+    matches!(
+        character,
+        '\u{9}'
+            | '\u{a}'
+            | '\u{d}'
+            | '\u{20}'..='\u{d7ff}'
+            | '\u{e000}'..='\u{fffd}'
+            | '\u{10000}'..='\u{10ffff}'
+    )
+}
+
+/// The first character in `text` that XML does not allow, as a refusal.
+fn unwritable(field: &str, text: &str, mark: Option<usize>) -> Option<Refusal> {
+    let bad = text.chars().find(|character| !xml_allows(*character))?;
+    Some(Refusal {
+        code: "unwritable-character",
+        mark,
+        message: format!(
+            "{field} contains U+{:04X}, which XML does not allow in a document",
+            bad as u32
+        ),
+    })
 }
 
 /// Why a declaration could not be read.
@@ -400,6 +483,13 @@ impl Figure {
                 message: "the figure declares no marks, so there is nothing to read".to_string(),
             });
         }
+        // XML-forbidden text makes the written SVG unparseable. Check every
+        // field once; the PNG route uses the same declared-text contract.
+        refusals.extend(
+            self.text_fields()
+                .into_iter()
+                .filter_map(|(field, text, mark)| unwritable(&field, text, mark)),
+        );
         for (index, mark) in self.marks.iter().enumerate() {
             let values = mark.values();
             if let Some(bad) = values.iter().find(|value| !value.is_finite()) {
@@ -625,6 +715,28 @@ impl Figure {
             }
         }
         refusals
+    }
+
+    /// Every declared string, with the field it is in and the mark it belongs to.
+    fn text_fields(&self) -> Vec<(String, &str, Option<usize>)> {
+        let mut fields: Vec<(String, &str, Option<usize>)> = Vec::new();
+        for (name, text) in [
+            ("title", &self.title),
+            ("x_label", &self.x_label),
+            ("y_label", &self.y_label),
+        ] {
+            if let Some(text) = text {
+                fields.push((name.to_string(), text, None));
+            }
+        }
+        for (index, mark) in self.marks.iter().enumerate() {
+            fields.extend(
+                mark.text_fields()
+                    .into_iter()
+                    .map(|(name, text)| (name, text, Some(index))),
+            );
+        }
+        fields
     }
 
     /// A figure with no marks, for a caller building one up.

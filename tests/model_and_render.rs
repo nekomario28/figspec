@@ -1,7 +1,8 @@
 //! The properties this crate promises, each one that a real mistake would break.
 
 use figspec::inspect::{inspect, ERROR, INFO, WARN};
-use figspec::model::{Figure, Mark, Scale};
+use figspec::model::{Figure, Mark, Scale, Series};
+use figspec::place::boxes;
 use figspec::{to_png, to_svg};
 
 fn bars(values: Vec<f64>) -> Mark {
@@ -318,6 +319,8 @@ fn the_codebook_names_every_code_the_checks_emit() {
         "two-error-shapes",
         "negative-error",
         "negative-size",
+        "overlapping-bars",
+        "unwritable-character",
         "no-title",
         "no-axis-label",
     ];
@@ -535,4 +538,278 @@ fn the_truncated_baseline_message_names_the_axis_not_the_bars() {
         .clone();
     assert!(message.contains("the y axis starts at 1"), "{message}");
     assert!(!message.contains("bars start at"), "{message}");
+}
+
+#[test]
+fn two_bar_marks_are_drawn_over_each_other() {
+    // Measured: two `bar` marks of one category each were drawn across the whole
+    // plot (x 121.3, width 480 on a 600 px plot) with the second covering the
+    // first completely, and two marks of *different* categories still landed on
+    // the same two slots. `inspect` said nothing and the figure showed one series
+    // where the model declared two.
+    let figure = Figure::new()
+        .with_mark(bars(vec![1.0]))
+        .with_mark(bars(vec![2.0]));
+    let problems = inspect(&figure).problems;
+    let found = problems
+        .iter()
+        .find(|problem| problem.code == "overlapping-bars")
+        .unwrap_or_else(|| panic!("no overlapping-bars in {:?}", problems));
+    assert_eq!(found.severity, ERROR);
+    assert_eq!(found.mark, Some(1), "the later mark is the one drawn over");
+    assert!(found.message.contains("mark 1"), "{}", found.message);
+    assert!(found.message.contains("mark 0"), "{}", found.message);
+    assert_eq!(inspect(&figure).exit_code(), 1);
+    // It is a finding, not a refusal: rendering it is how a reader sees it.
+    assert!(to_svg(&figure).is_ok());
+}
+
+#[test]
+fn every_later_bar_mark_is_reported_against_every_earlier_one() {
+    // Three bar marks overplot in three pairs, so dropping the pairs and looking
+    // only at the mark before would report two of them.
+    let figure = Figure::new()
+        .with_mark(bars(vec![1.0]))
+        .with_mark(bars(vec![2.0]))
+        .with_mark(bars(vec![3.0]));
+    let marks: Vec<Option<usize>> = inspect(&figure)
+        .problems
+        .iter()
+        .filter(|problem| problem.code == "overlapping-bars")
+        .map(|problem| problem.mark)
+        .collect();
+    assert_eq!(marks, vec![Some(1), Some(2), Some(2)]);
+}
+
+#[test]
+fn one_bar_mark_and_a_line_are_not_reported() {
+    // Only bars share slots: a line over a bar chart is a normal figure.
+    let figure = Figure::new()
+        .with_mark(bars(vec![1.0, 2.0]))
+        .with_mark(line(vec![[0.0, 1.0], [1.0, 2.0]]));
+    let codes: Vec<String> = inspect(&figure)
+        .problems
+        .into_iter()
+        .map(|problem| problem.code)
+        .collect();
+    assert!(
+        !codes.contains(&"overlapping-bars".to_string()),
+        "{codes:?}"
+    );
+}
+
+#[test]
+fn a_character_xml_does_not_allow_is_refused() {
+    // Measured: a title of "a\u{1}b" made the written SVG not well-formed XML
+    // (`not well-formed (invalid token)`) while `inspect` said nothing about it,
+    // so `inspect` called a document no XML parser will read clean.
+    let control = "a\u{1}b";
+    let figures: Vec<(&str, Figure)> = vec![
+        (
+            "title",
+            Figure::new()
+                .with_title(control)
+                .with_mark(line(vec![[0.0, 0.0], [1.0, 1.0]])),
+        ),
+        (
+            "x label",
+            Figure::new()
+                .with_labels(control, "y")
+                .with_mark(line(vec![[0.0, 0.0], [1.0, 1.0]])),
+        ),
+        (
+            "y label",
+            Figure::new()
+                .with_labels("x", control)
+                .with_mark(line(vec![[0.0, 0.0], [1.0, 1.0]])),
+        ),
+        (
+            "mark label",
+            Figure::new().with_mark(Mark::Line {
+                points: vec![[0.0, 0.0], [1.0, 1.0]],
+                y_err: None,
+                y_err_asymmetric: None,
+                color: None,
+                label: Some(control.to_string()),
+            }),
+        ),
+        (
+            "category",
+            Figure::new().with_mark(Mark::Bar {
+                categories: vec![control.to_string()],
+                values: vec![1.0],
+                color: None,
+                label: None,
+            }),
+        ),
+        (
+            "series label",
+            Figure::new().with_mark(Mark::GroupedBar {
+                categories: vec!["a".to_string()],
+                series: vec![Series {
+                    values: vec![1.0],
+                    label: Some(control.to_string()),
+                    color: None,
+                }],
+            }),
+        ),
+        (
+            "row label",
+            Figure::new().with_mark(Mark::Heatmap {
+                values: vec![vec![1.0]],
+                row_labels: Some(vec![control.to_string()]),
+                col_labels: None,
+                color_map: None,
+                label: None,
+            }),
+        ),
+        (
+            "column label",
+            Figure::new().with_mark(Mark::Heatmap {
+                values: vec![vec![1.0]],
+                row_labels: None,
+                col_labels: Some(vec![control.to_string()]),
+                color_map: None,
+                label: None,
+            }),
+        ),
+    ];
+    for (field, figure) in figures {
+        let problems = inspect(&figure).problems;
+        let found = problems
+            .iter()
+            .find(|problem| problem.code == "unwritable-character")
+            .unwrap_or_else(|| panic!("{field}: no refusal in {:?}", problems));
+        assert_eq!(found.severity, ERROR, "{field}");
+        assert!(found.message.contains("U+0001"), "{}", found.message);
+        // A title or an axis label is about the figure, not about a mark.
+        let figure_level = ["title", "x label", "y label"].contains(&field);
+        assert_eq!(
+            found.mark,
+            if figure_level { None } else { Some(0) },
+            "{field}"
+        );
+        assert!(to_svg(&figure).is_err(), "{field} rendered anyway");
+    }
+}
+
+#[test]
+fn the_characters_xml_allows_are_not_refused() {
+    // The XML 1.0 `Char` production: tab, newline and carriage return, anything
+    // up to and including the last character before the surrogate range, and
+    // everything above it except the two non-characters. A guard that refuses
+    // what the format allows is as wrong as one that allows what it forbids.
+    let allowed = [
+        "tab\ta",
+        "a\nb",
+        "a\rb",
+        "\u{7f}",
+        "\u{e9}",
+        "\u{fffd}",
+        // The last character before the surrogate range is allowed; the range
+        // itself is not even encodable as text, which is why the guard stops there.
+        "\u{d7ff}",
+        "\u{1f600}",
+    ];
+    for text in allowed {
+        let figure = Figure::new()
+            .with_title(text)
+            .with_labels("x", "y")
+            .with_mark(line(vec![[0.0, 0.0], [1.0, 1.0]]));
+        let codes: Vec<String> = inspect(&figure)
+            .problems
+            .into_iter()
+            .map(|problem| problem.code)
+            .collect();
+        assert!(
+            !codes.contains(&"unwritable-character".to_string()),
+            "{text:?}: {codes:?}"
+        );
+        assert!(to_svg(&figure).is_ok(), "{text:?}");
+    }
+    for text in ["\u{0}", "\u{b}", "\u{1f}", "\u{fffe}", "\u{ffff}"] {
+        let figure = Figure::new()
+            .with_title(text)
+            .with_labels("x", "y")
+            .with_mark(line(vec![[0.0, 0.0], [1.0, 1.0]]));
+        assert!(
+            to_svg(&figure).is_err(),
+            "{text:?} is not a character XML allows"
+        );
+    }
+}
+
+#[test]
+fn a_canvas_with_no_plot_area_is_refused_by_name() {
+    // Measured: `width`/`height` of 1x1, 40x40, 71x10, 72x10, 100x11 and 300x10
+    // all produced a *negative* plot rectangle and a file with nothing in it,
+    // exit 0. The margins are absolute pixels, so a canvas can be smaller than
+    // what its own axes need.
+    let figure = |width: u32, height: u32| Figure {
+        width: Some(width),
+        height: Some(height),
+        ..Figure::new()
+            .with_title("tiny")
+            .with_labels("x", "y")
+            .with_mark(bars(vec![1.0]))
+    };
+    for (width, height) in [(1, 1), (40, 40), (71, 10), (72, 10), (100, 11), (300, 10)] {
+        let refused = to_svg(&figure(width, height)).expect_err("an empty picture");
+        let message = refused.to_string();
+        assert!(message.contains("its own axes take"), "{message}");
+        assert!(message.contains(" left to draw in"), "{message}");
+        assert!(
+            message.contains(&format!("{width}x{height} px")),
+            "{message}"
+        );
+        assert!(to_png(&figure(width, height)).is_err());
+        assert!(
+            figspec::storyboard::of(&figure(width, height), &inspect(&figure(width, height)))
+                .is_err()
+        );
+        assert!(boxes(&figure(width, height)).is_err());
+        // The message names a size that draws. That is the whole use of it: a
+        // reader who declared 1x1 has to be told something they can act on, and a
+        // number that fails again would be worse than none.
+        let named: Vec<u32> = message
+            .split("at least ")
+            .nth(1)
+            .expect("a size")
+            .split(" px")
+            .next()
+            .expect("the end of the size")
+            .split('x')
+            .map(|part| part.parse().expect("a number"))
+            .collect();
+        assert_eq!(named.len(), 2, "{message}");
+        let promised = to_svg(&figure(named[0], named[1]));
+        assert!(promised.is_ok(), "{named:?}: {:?}", promised.err());
+        // (Not "and one pixel less fails": the margins are recomputed for the
+        // canvas they are given, so which dimension binds moves with the size.)
+    }
+    // A canvas with a plot area one pixel wide still draws: the rule is about an
+    // empty picture, not about small numbers. Measured for a bare bar figure —
+    // same margins, no title, no axis labels — 72x10 draws nothing and 73x71
+    // draws, so the boundary is one pixel past the axes, not one pixel past a
+    // rounding.
+    let bare = |width: u32, height: u32| Figure {
+        width: Some(width),
+        height: Some(height),
+        ..Figure::new().with_mark(bars(vec![1.0]))
+    };
+    assert!(to_svg(&bare(72, 10)).is_err());
+    assert!(to_svg(&bare(73, 71)).is_ok());
+    // And it is a property of the route, not of the model: `inspect` reads the
+    // model's own problems and has no canvas in sight.
+    let smallest = figure(200, 200);
+    assert!(to_svg(&smallest).is_ok());
+    let codes: Vec<String> = inspect(&smallest)
+        .problems
+        .into_iter()
+        .map(|problem| problem.code)
+        .collect();
+    assert!(
+        !codes.iter().any(|code| code.contains("canvas")),
+        "{codes:?}"
+    );
 }

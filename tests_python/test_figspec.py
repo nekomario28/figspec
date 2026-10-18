@@ -567,6 +567,12 @@ def test_the_reader_refuses_a_canvas_with_no_extent():
             figspec.inspect({"marks": [], field: 0})
         with pytest.raises(ValueError, match=f"{field} is 0"):
             figspec.render_svg({"marks": [], field: 0})
-    # A real size is still read and rendered.
+    # A positive width is a valid declaration, but rendering also needs room for
+    # the axes. Inspection is model-only; drawing refuses the empty plot area.
     drawn = {"marks": [{"kind": "line", "points": [[1.0, 2.0], [2.0, 3.0]]}], "width": 1}
+    assert not any(p["severity"] == "error" for p in figspec.inspect(drawn))
+    for render in (figspec.render_svg, figspec.render_png, figspec.storyboard_svg):
+        with pytest.raises(ValueError, match="no width left to draw in"):
+            render(drawn)
+    drawn["width"] = 200
     assert figspec.render_svg(drawn).startswith("<svg")

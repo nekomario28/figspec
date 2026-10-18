@@ -40,10 +40,18 @@ pub struct Storyboard {
     /// Findings the report carries that are about no particular mark, by report
     /// position. They are not boxed, deliberately.
     pub unlocated: Vec<usize>,
+    /// Findings that named a mark this figure has no box for, by report position:
+    /// the figure has no such mark, or the mark is one it draws nothing for.
+    ///
+    /// Caller-supplied reports can refer to a different figure. Naming a missing
+    /// mark is not the same as naming no mark.
+    pub unboxable: Vec<usize>,
 }
 
 const ERROR_COLOR: &str = "#c0392b";
 const OTHER_COLOR: &str = "#2c6fbb";
+/// The plate a number is drawn on, in pixels.
+const PLATE_HEIGHT: f64 = 16.0;
 
 /// Draw `figure`, boxing every mark `report` names.
 ///
@@ -65,6 +73,7 @@ pub fn of(figure: &Figure, report: &Report) -> Result<Storyboard, RenderError> {
     // information.
     let mut boxes: Vec<Boxed> = Vec::new();
     let mut unlocated: Vec<usize> = Vec::new();
+    let mut unboxable: Vec<usize> = Vec::new();
     for (index, problem) in report.problems.iter().enumerate() {
         let number = index + 1;
         let Some(mark) = problem.mark else {
@@ -72,8 +81,8 @@ pub fn of(figure: &Figure, report: &Report) -> Result<Storyboard, RenderError> {
             continue;
         };
         let Some(rect) = area.box_of(figure, mark) else {
-            // A mark with nothing drawn has no rectangle to draw a box on.
-            unlocated.push(number);
+            // Do not invent a location for an invisible or missing mark.
+            unboxable.push(number);
             continue;
         };
         match boxes.iter_mut().find(|boxed| boxed.mark == mark) {
@@ -91,7 +100,7 @@ pub fn of(figure: &Figure, report: &Report) -> Result<Storyboard, RenderError> {
     }
 
     let mut svg = svg;
-    let overlay = overlay(&boxes);
+    let overlay = overlay(&boxes, &area)?;
     if let Some(end) = svg.rfind("</svg>") {
         svg.insert_str(end, &overlay);
     }
@@ -99,11 +108,12 @@ pub fn of(figure: &Figure, report: &Report) -> Result<Storyboard, RenderError> {
         svg,
         boxes,
         unlocated,
+        unboxable,
     })
 }
 
 /// The boxes and their numbers, as SVG to place on top of the figure.
-fn overlay(boxes: &[Boxed]) -> String {
+fn overlay(boxes: &[Boxed], area: &PlotArea) -> Result<String, RenderError> {
     let mut out = String::from("<g id=\"figspec-storyboard\">\n");
     for boxed in boxes {
         let color = if boxed.is_error {
@@ -125,23 +135,32 @@ fn overlay(boxes: &[Boxed]) -> String {
             .map(|number| number.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        // The number sits on the box's top-left corner, on a filled plate so it
-        // stays readable over grid lines and data.
+        // Move the label, not the measured box. A 16 px plate above a plot with
+        // a 10 px top margin lands at y=-6 unless clamped. Several findings on
+        // one mark can also make the plate wider than the right margin.
         let plate = 8.0 + 7.0 * label.len() as f64;
-        let (x, y) = (boxed.rect.left, boxed.rect.top);
+        if plate > area.width || PLATE_HEIGHT > area.height {
+            return Err(RenderError {
+                message: format!(
+                    "mark {}'s number plate needs {plate:.0}x{PLATE_HEIGHT:.0} px, \
+                     larger than the {:.0}x{:.0} px canvas; declare a larger canvas",
+                    boxed.mark, area.width, area.height
+                ),
+            });
+        }
+        let x = boxed.rect.left.clamp(0.0, (area.width - plate).max(0.0));
+        let y = (boxed.rect.top - PLATE_HEIGHT).clamp(0.0, (area.height - PLATE_HEIGHT).max(0.0));
         out.push_str(&format!(
-            "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{plate:.2}\" height=\"16\" \
-             fill=\"{color}\"/>\n",
-            x,
-            y - 16.0
+            "<rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{plate:.2}\" height=\"{PLATE_HEIGHT:.0}\" \
+             fill=\"{color}\"/>\n"
         ));
         out.push_str(&format!(
             "<text x=\"{:.2}\" y=\"{:.2}\" font-family=\"sans-serif\" font-size=\"11\" \
              fill=\"white\" text-anchor=\"middle\">{label}</text>\n",
             x + plate / 2.0,
-            y - 4.5
+            y + 11.5
         ));
     }
     out.push_str("</g>\n");
-    out
+    Ok(out)
 }

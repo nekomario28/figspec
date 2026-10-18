@@ -169,3 +169,65 @@ in either.
 `render -o -` writes a file named `-`; stdout is not an output of these commands, and
 a second way to get the bytes was not added. `inspect` calls a `u32::MAX` canvas
 clean — the raster budget is the route's, and the SVG route honours the declaration.
+
+## Fifth review: the drawn pixels
+
+This review read storyboard SVG back as XML and checked its boxes and number
+plates against the canvas and drawn primitives. It also exercised the Rust API
+with caller-supplied reports, not only the reports `inspect` creates.
+
+### Found and fixed
+
+- A log bar with `y_min` put its box at the plot's top, 10 px down, but its 16 px
+  number plate at **y = -6**. Plates now stay inside the canvas on both axes.
+  A plate wider than its canvas is refused: 20 findings on one mark made a 358 px
+  plate on a 100 px canvas; moving its x to zero did not make it fit.
+- A 1x1 canvas produced a plot rectangle `(71.65, 10, -70.65, -60)` and exited 0.
+  The shared geometry route now refuses non-positive plot area for SVG, PNG,
+  storyboard and placement. The refusal's suggested canvas is exercised by tests.
+- A title `a` + U+0001 + `b` made SVG that an XML parser rejected while `inspect`
+  reported no text error. `unwritable-character` now covers every text field via
+  the shared model refusals, including mark and series colour strings; valid XML
+  characters are still accepted. A regression
+  test also prevents reporting the same mark field twice.
+- A caller-supplied report naming mark 7 of a one-mark figure was described as
+  “about no mark”. `unboxable` now distinguishes it from genuinely `unlocated`
+  findings. No rectangle is invented for a missing mark.
+- Two separate bar marks occupied the same slots: a 480 px red bar was covered by
+  a taller green bar at the same x. `overlapping-bars` reports each later/earlier
+  pair with intersecting filled regions and recommends one grouped bar. Rendering
+  is still allowed to show it. The check includes separate grouped marks and
+  mixed simple/grouped marks, but not opposite signs or disjoint subslots.
+- Zero-valued bars drew rectangles of height 0 at y=10 while their storyboard box
+  appeared at y=456 with height 4. Bars with no visible height now have no box;
+  their findings remain in `unboxable`, including bars wholly below `y_min` on a
+  valid increasing axis. A reversed computed y range is refused, not interpreted
+  as a declaration to invert the axis.
+
+### Independent review
+
+A separate read-only review reproduced four additional cases: U+0001 in a colour
+attribute still broke XML; an inverted computed range made a visible negative bar
+look unboxable; opposite-sign bars were falsely called overlapping; and separate
+grouped marks overplotted without a finding. Each reproduction became a failing
+test before its fix, with matching mutations. The overlap check now sweeps each
+category's two series partitions rather than comparing only series indices.
+
+A follow-up review proposed an overflowing computed range. It was reproduced:
+finite values from -1e308 to 1e308 produced an SVG path containing `NaN`, exit 0.
+Drawing now requires finite, increasing computed ranges with finite spans on both
+axes. Tests distinguish these route failures from non-finite model values.
+The overlap test also excludes bars wholly clipped away by `y_min`.
+
+### Test gap closed
+
+A warning naming a mark is reachable through `storyboard::of(figure, report)`, even
+though the inspector's current mark-level findings are errors. Its non-error box
+colour is now tested and mutation-checked, rather than removed as unreachable.
+
+### Limits
+
+The SVG probes check geometry, document parsing and report-number agreement, not
+font rasterization or pixel-identical output across platforms. Zero-height bars
+remain valid model data; only an invented visual location is removed. Ordinary
+bar/line overlays are not reported as `overlapping-bars`.

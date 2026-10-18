@@ -179,6 +179,22 @@ fn broken() -> Vec<(&'static str, Figure, &'static str)> {
             Figure::new().with_mark(bar(vec!["a", "b"], vec![1.0])),
             "mismatched-lengths",
         ),
+        (
+            // A control character goes into the document as itself, and the
+            // document then is not well-formed XML: measured, the written SVG made
+            // a parser report `not well-formed (invalid token)`, while `inspect`
+            // called it clean.
+            "a category no document can hold",
+            Figure::new().with_mark(bar(vec!["a\u{1}b"], vec![1.0])),
+            "unwritable-character",
+        ),
+        (
+            "a title no document can hold",
+            Figure::new()
+                .with_title("a\u{1}b")
+                .with_mark(bar(vec!["a"], vec![1.0])),
+            "unwritable-character",
+        ),
     ]
 }
 
@@ -292,9 +308,16 @@ fn the_renderer_has_no_refusals_of_its_own() {
 
 #[test]
 fn the_new_codes_are_the_errors_a_caller_sees() {
-    // Named here as well as in the codebook test: these three were added by this
-    // change, and a caller branching on a code needs it to be an error.
-    for code in ["empty-mark", "short-line", "ambiguous-labels"] {
+    // Named here as well as in the codebook test: a caller branching on a code
+    // needs it to be an error, and every code a later review added has to be an
+    // error for the same reason.
+    for code in [
+        "empty-mark",
+        "short-line",
+        "ambiguous-labels",
+        "overlapping-bars",
+        "unwritable-character",
+    ] {
         let (_, severity, _) = figspec::CODEBOOK
             .iter()
             .find(|(known, _, _)| *known == code)

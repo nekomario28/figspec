@@ -14,6 +14,7 @@
 //!   the environment or a random seed.
 
 use kuva::prelude::*;
+use kuva::render::layout::ComputedLayout;
 
 use crate::model::{ColorMap, Figure, Mark, Scale};
 
@@ -123,6 +124,56 @@ fn check_raster_budget(
         }
     }
     Ok(())
+}
+
+/// Refuse a canvas that leaves no plot area to draw in.
+///
+/// The margins are absolute pixels — they grow with the tick labels — so a canvas
+/// can be smaller than what its own axes need. A 1x1 canvas produced a negative
+/// plot rectangle (width -70.65, height -60), so a positive canvas alone is not
+/// enough. Require a positive plot area, not an arbitrary minimum canvas size.
+///
+/// The bound is in the route rather than the model, like the raster budget: how
+/// much room the labels need is the layout engine's arithmetic, and `inspect`
+/// still reads the model's own problems without a canvas.
+fn check_plot_area(computed: &ComputedLayout) -> Result<(), RenderError> {
+    // Finite model values can still overflow in layout arithmetic. The model
+    // also has no inverted-axis mode: y_min must not reverse the computed range.
+    for (axis, (lower, upper)) in [("x", computed.x_range), ("y", computed.y_range)] {
+        let finite = lower.is_finite() && upper.is_finite() && (upper - lower).is_finite();
+        if !finite || upper <= lower {
+            return Err(refuse(format!(
+                "the computed {axis} axis runs from {lower} to {upper}, not a finite increasing \
+                 range with a finite span; reduce the data range and remove any y_min \
+                 above the data's maximum"
+            )));
+        }
+    }
+    let across = computed.width - computed.margin_left - computed.margin_right;
+    let down = computed.height - computed.margin_top - computed.margin_bottom;
+    if across > 0.0 && down > 0.0 {
+        return Ok(());
+    }
+    let missing = if across <= 0.0 && down <= 0.0 {
+        "width and height"
+    } else if across <= 0.0 {
+        "width"
+    } else {
+        "height"
+    };
+    let need_width = (computed.margin_left + computed.margin_right).ceil();
+    let need_height = (computed.margin_top + computed.margin_bottom).ceil();
+    // Leave positive space beyond the axes, even when their extent is integral.
+    // Regression tests render the suggested size rather than just matching text.
+    Err(refuse(format!(
+        "the canvas is {:.0}x{:.0} px and its own axes take {need_width:.0}x{need_height:.0} px \
+         for these labels, so there is no {missing} left to draw in; declare a canvas of \
+         at least {:.0}x{:.0} px",
+        computed.width,
+        computed.height,
+        need_width + 1.0,
+        need_height + 1.0
+    )))
 }
 
 fn plots_of(figure: &Figure) -> Result<Vec<Plot>, RenderError> {
@@ -398,6 +449,7 @@ pub(crate) fn normalized_svg(svg: String) -> String {
 pub(crate) fn geometry(figure: &Figure) -> Result<(Vec<Plot>, Layout), RenderError> {
     let plots = plots_of(figure)?;
     let layout = layout_of(figure, &plots);
+    check_plot_area(&ComputedLayout::from_layout(&layout))?;
     Ok((plots, layout))
 }
 

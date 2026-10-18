@@ -213,3 +213,71 @@ fn the_help_and_the_codebook_are_not_errors() {
     let printed = String::from_utf8_lossy(&codes.stdout);
     assert!(printed.contains("negative-size"), "{printed}");
 }
+
+#[test]
+fn a_canvas_with_no_plot_area_is_refused_and_writes_nothing() {
+    // Measured: `{"width": 100, "height": 11, ...}` exited 0 and wrote an SVG
+    // whose plot rectangle had a negative width — a file with axes and no picture
+    // in it. The refusal names the size the reader has to declare instead, and
+    // this test declares it and gets the picture.
+    let dir = scratch("empty-picture");
+    let path = dir.join("tiny.json");
+    let figure = || Figure {
+        width: Some(100),
+        height: Some(11),
+        ..Figure::new().with_title("tiny").with_mark(Mark::Bar {
+            categories: vec!["a".to_string()],
+            values: vec![1.0],
+            color: None,
+            label: None,
+        })
+    };
+    figure().save(&path).unwrap();
+    for command in ["render", "storyboard"] {
+        let out = dir.join(format!("{command}.svg"));
+        let _ = std::fs::remove_file(&out);
+        let output = run(&[command, path.to_str().unwrap(), "-o", out.to_str().unwrap()]);
+        assert_eq!(code(&output), 2, "{command}: {}", stderr(&output));
+        let message = stderr(&output);
+        assert!(
+            message.contains("its own axes take"),
+            "{command}: {message}"
+        );
+        assert!(message.contains("100x11 px"), "{command}: {message}");
+        assert!(
+            !out.exists(),
+            "{command} refused the picture and wrote it anyway"
+        );
+    }
+    // The size the refusal names is enough, through the same command.
+    let out = dir.join("fits.svg");
+    let _ = std::fs::remove_file(&out);
+    let output = run(&[
+        "render",
+        path.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    let message = stderr(&output);
+    let named = message
+        .split("at least ")
+        .nth(1)
+        .expect("a size")
+        .split(" px")
+        .next()
+        .expect("the end of the size")
+        .to_string();
+    let (width, height) = named.split_once('x').expect("width and height");
+    let mut figure = figure();
+    figure.width = Some(width.parse().unwrap());
+    figure.height = Some(height.parse().unwrap());
+    figure.save(&path).unwrap();
+    let output = run(&[
+        "render",
+        path.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(out.exists());
+}

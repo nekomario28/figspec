@@ -211,7 +211,7 @@ fn storyboard_command(args: &[String]) -> Result<u8, String> {
         .map_err(|error| format!("{}: {error}", output.display()))?;
     print_report(&model, &figure, &report);
     if drawn.boxes.is_empty() {
-        println!("storyboard: no finding names a mark, so no box was drawn");
+        println!("storyboard: no finding names a mark with a drawable extent, so no box was drawn");
     } else {
         println!(
             "storyboard: {} box(es) in {}",
@@ -227,6 +227,13 @@ fn storyboard_command(args: &[String]) -> Result<u8, String> {
         let numbers: Vec<String> = drawn.unlocated.iter().map(usize::to_string).collect();
         println!(
             "  finding(s) {} are about no mark and are not boxed",
+            numbers.join(",")
+        );
+    }
+    if !drawn.unboxable.is_empty() {
+        let numbers: Vec<String> = drawn.unboxable.iter().map(usize::to_string).collect();
+        println!(
+            "  finding(s) {} name a mark this figure has no box for",
             numbers.join(",")
         );
     }

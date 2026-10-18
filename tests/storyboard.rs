@@ -6,7 +6,7 @@
 //! report — so it is checked against the engine rather than against a number
 //! copied from a previous run.
 
-use figspec::inspect::inspect;
+use figspec::inspect::{inspect, Problem, Report};
 use figspec::model::{Figure, Mark, Scale, Series};
 use figspec::place::{boxes, category_center, PlotArea};
 use figspec::{storyboard_svg, to_svg};
@@ -411,21 +411,40 @@ fn the_storyboard_is_the_rendered_figure_with_boxes_on_top() {
 #[test]
 fn the_numbers_are_the_report_positions() {
     // Two truncated bar marks: two errors, on two marks, and the warnings after
-    // them keep their own numbers.
+    // them keep their own numbers. (The two bar marks are also reported as
+    // `overlapping-bars`, so the expected numbers are read off the report rather
+    // than written down: what the storyboard promises is that a box's numbers are
+    // the positions of the findings that name its mark, whatever they are.)
     let mut figure = Figure::new()
         .with_mark(bars(vec![31.5, 34.2]))
         .with_mark(bars(vec![10.0, 11.0]));
     figure.y_min = Some(5.0);
     let report = inspect(&figure);
+    let positions = |mark: usize| -> Vec<usize> {
+        report
+            .problems
+            .iter()
+            .enumerate()
+            .filter(|(_, problem)| problem.mark == Some(mark))
+            .map(|(index, _)| index + 1)
+            .collect()
+    };
     let drawn = figspec::storyboard::of(&figure, &report).expect("a storyboard");
     assert_eq!(drawn.boxes.len(), 2, "{:?}", drawn.boxes);
-    assert_eq!(drawn.boxes[0].mark, 0);
-    assert_eq!(drawn.boxes[1].mark, 1);
-    assert_eq!(drawn.boxes[0].numbers, vec![1]);
-    assert_eq!(drawn.boxes[1].numbers, vec![2]);
+    // One box per mark, in report order, each carrying that mark's positions.
+    let mut marks: Vec<usize> = drawn.boxes.iter().map(|boxed| boxed.mark).collect();
+    marks.sort_unstable();
+    assert_eq!(marks, vec![0, 1]);
+    for boxed in &drawn.boxes {
+        assert_eq!(boxed.numbers, positions(boxed.mark), "{:?}", boxed);
+    }
     assert!(drawn.boxes.iter().all(|boxed| boxed.is_error));
-    assert!(drawn.svg.contains(">1</text>"));
-    assert!(drawn.svg.contains(">2</text>"));
+    // One plate per mark, carrying that mark's numbers in report order.
+    for boxed in &drawn.boxes {
+        let joined: Vec<String> = boxed.numbers.iter().map(usize::to_string).collect();
+        let joined = joined.join(",");
+        assert!(drawn.svg.contains(&format!(">{joined}</text>")), "{joined}");
+    }
 }
 
 #[test]
@@ -481,4 +500,154 @@ fn the_same_figure_and_report_draw_the_same_bytes() {
         storyboard_svg(&json).expect("svg"),
         storyboard_svg(&json).expect("svg")
     );
+}
+
+/// The canvas the picture declares, as `(width, height)`.
+///
+/// Read out of the file rather than recomputed: "inside the picture" is a claim
+/// about the picture the reader opens.
+fn canvas(svg: &str) -> (f64, f64) {
+    let tag = svg
+        .split_once("<svg")
+        .expect("an svg element")
+        .1
+        .split_once('>')
+        .expect("a closed tag")
+        .0;
+    let value = |name: &str| -> f64 {
+        let at = tag.find(&format!("{name}=\"")).expect("an attribute") + name.len() + 2;
+        tag[at..]
+            .split('"')
+            .next()
+            .expect("a value")
+            .parse()
+            .expect("a number")
+    };
+    (value("width"), value("height"))
+}
+
+/// The plate the overlay draws and the number on it, as `(x, y, width, text_y)`.
+fn plate(svg: &str) -> (f64, f64, f64, f64) {
+    let group = &svg[svg
+        .find("<g id=\"figspec-storyboard\">")
+        .expect("an overlay")..];
+    let drawn = group
+        .split("<rect ")
+        .find(|chunk| chunk.contains("height=\"16\""))
+        .expect("a plate");
+    let value = |name: &str| -> f64 {
+        let at = drawn.find(&format!("{name}=\"")).expect("an attribute") + name.len() + 2;
+        drawn[at..]
+            .split('"')
+            .next()
+            .expect("a value")
+            .parse()
+            .expect("a number")
+    };
+    let text = group.split("<text ").nth(1).expect("a number");
+    let text_y: f64 = text[text.find("y=\"").expect("a y") + 3..]
+        .split('"')
+        .next()
+        .expect("a value")
+        .parse()
+        .expect("a number");
+    (value("x"), value("y"), value("width"), text_y)
+}
+
+#[test]
+fn a_number_plate_stays_inside_the_picture() {
+    // A log axis with a declared `y_min` puts the mark's box at the top of the
+    // plot. Measured: the plate then came out at y = -6 — a 16 px plate on a
+    // figure whose top margin is 10 px — above the canvas, with the top of the
+    // number cut off, while the report went on to say "1 problem".
+    let mut figure = Figure::new().with_mark(bars(vec![10.0]));
+    figure.y_min = Some(1.0);
+    figure.y_scale = Scale::Log;
+    let report = inspect(&figure);
+    let drawn = figspec::storyboard::of(&figure, &report).expect("a storyboard");
+    assert_eq!(drawn.boxes.len(), 1, "{:?}", drawn.boxes);
+    let (width, height) = canvas(&drawn.svg);
+    let (x, y, plate_width, text_y) = plate(&drawn.svg);
+    assert!(x >= 0.0 && x + plate_width <= width, "{x} {plate_width}");
+    assert!(y >= 0.0 && y + 16.0 <= height, "{y}");
+    assert!(text_y >= 0.0 && text_y <= height, "{text_y}");
+    // And the box it belongs to is still boxed: the fix moves the label, not the
+    // finding.
+    assert!(drawn.svg.contains("height=\"16\" fill=\"#c0392b\""));
+}
+
+#[test]
+fn a_plate_is_kept_inside_the_canvas_on_the_right_too() {
+    // A report naming one mark three times makes a wider plate than a narrow
+    // figure's right margin, and the plate is a label: the reader has to be able
+    // to read it.
+    let mut figure = Figure::new().with_mark(bars(vec![1.0, 2.0]));
+    figure.y_min = Some(1.0);
+    figure.width = Some(100);
+    figure.height = Some(400);
+    let mut report = inspect(&figure);
+    let first = report.problems[0].clone();
+    assert_eq!(first.mark, Some(0));
+    for _ in 0..2 {
+        report.problems.insert(0, first.clone());
+    }
+    let drawn = figspec::storyboard::of(&figure, &report).expect("a storyboard");
+    assert_eq!(drawn.boxes[0].numbers, vec![1, 2, 3], "{:?}", drawn.boxes);
+    let (width, height) = canvas(&drawn.svg);
+    let (x, y, plate_width, text_y) = plate(&drawn.svg);
+    assert!(x >= 0.0, "{x}");
+    assert!(x + plate_width <= width, "{x} + {plate_width} > {width}");
+    assert!(y >= 0.0 && y + 16.0 <= height, "{y}");
+    assert!(text_y <= height, "{text_y}");
+}
+
+#[test]
+fn a_finding_about_a_mark_the_figure_has_not_got_is_not_about_no_mark() {
+    // The report is an argument, so it can come from another figure — that is what
+    // the API invites. Calling such a finding "about no mark" is false: it names
+    // mark 7 of a figure with one mark, and the reader would go looking for a
+    // finding that named nothing.
+    let figure = Figure::new().with_mark(bars(vec![1.0]));
+    let report = Report {
+        problems: vec![
+            Problem {
+                code: "truncated-baseline".to_string(),
+                severity: "error".to_string(),
+                message: "a review of a figure that has changed".to_string(),
+                mark: Some(7),
+            },
+            Problem {
+                code: "no-title".to_string(),
+                severity: "warn".to_string(),
+                message: "about the figure, not a mark".to_string(),
+                mark: None,
+            },
+        ],
+    };
+    let drawn = figspec::storyboard::of(&figure, &report).expect("a storyboard");
+    assert!(drawn.boxes.is_empty(), "{:?}", drawn.boxes);
+    assert_eq!(drawn.unboxable, vec![1]);
+    assert_eq!(drawn.unlocated, vec![2]);
+}
+
+#[test]
+fn a_warning_about_a_mark_is_still_boxed() {
+    // Every finding `inspect` produces today is an error, so the other colour was
+    // reachable only through a report from somewhere else — which is exactly the
+    // report this API accepts. It is pinned so the branch cannot be deleted as
+    // dead code, and so the colour cannot silently become the error colour.
+    let figure = Figure::new().with_mark(bars(vec![1.0]));
+    let report = Report {
+        problems: vec![Problem {
+            code: "no-title".to_string(),
+            severity: "warn".to_string(),
+            message: "a warning that names the mark it is about".to_string(),
+            mark: Some(0),
+        }],
+    };
+    let drawn = figspec::storyboard::of(&figure, &report).expect("a storyboard");
+    assert_eq!(drawn.boxes.len(), 1);
+    assert!(!drawn.boxes[0].is_error);
+    assert!(drawn.svg.contains("#2c6fbb"), "{}", drawn.svg);
+    assert!(!drawn.svg.contains("#c0392b"), "{}", drawn.svg);
 }

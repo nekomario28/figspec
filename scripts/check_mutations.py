@@ -382,6 +382,133 @@ def mutations() -> list[Mutation]:
             ),
         ]
     )
+    # Drawn-output boundaries: geometry, XML text, report locations and plates.
+    cases.extend([
+        Mutation(
+            "plot-area-unchecked", "src/render.rs",
+            "    check_plot_area(&ComputedLayout::from_layout(&layout))?;", "",
+            ["--test", "model_and_render", "a_canvas_with_no_plot_area_is_refused_by_name"],
+        ),
+        Mutation(
+            "xml-characters-unchecked", "src/model.rs",
+            "    let bad = text.chars().find(|character| !xml_allows(*character))?;",
+            "    let bad = text.chars().find(|_| false)?;",
+            ["--test", "refusals", "everything_that_cannot_be_drawn_is_reported_as_an_error"],
+        ),
+        Mutation(
+            "axis-label-text-unchecked", "src/model.rs",
+            '            ("y_label", &self.y_label),', "",
+            ["--test", "model_and_render", "a_character_xml_does_not_allow_is_refused"],
+        ),
+        Mutation(
+            "series-label-text-unchecked", "src/model.rs",
+            '                    fields.push((format!("series[{index}].label"), label));', "",
+            ["--test", "model_and_render", "a_character_xml_does_not_allow_is_refused"],
+        ),
+        Mutation(
+            "overlapping-bars-unchecked", "src/inspect.rs",
+            "        for earlier in &bars[..position] {", "        for earlier in &bars[..0] {",
+            ["--test", "model_and_render", "two_bar_marks_are_drawn_over_each_other"],
+        ),
+        Mutation(
+            "overlapping-bars-consecutive-only", "src/inspect.rs",
+            "        for earlier in &bars[..position] {",
+            "        for earlier in &bars[position.saturating_sub(1)..position] {",
+            ["--test", "model_and_render", "every_later_bar_mark_is_reported_against_every_earlier_one"],
+        ),
+        Mutation(
+            "plate-y-not-clamped", "src/storyboard.rs",
+            "        let y = (boxed.rect.top - PLATE_HEIGHT).clamp(0.0, (area.height - PLATE_HEIGHT).max(0.0));",
+            "        let y = boxed.rect.top - PLATE_HEIGHT;",
+            ["--test", "storyboard", "a_number_plate_stays_inside_the_picture"],
+        ),
+        Mutation(
+            "plate-x-not-clamped", "src/storyboard.rs",
+            "        let x = boxed.rect.left.clamp(0.0, (area.width - plate).max(0.0));",
+            "        let x = boxed.rect.left;",
+            ["--test", "storyboard", "a_plate_is_kept_inside_the_canvas_on_the_right_too"],
+        ),
+        Mutation(
+            "unboxable-called-unlocated", "src/storyboard.rs",
+            "            unboxable.push(number);", "            unlocated.push(number);",
+            ["--test", "storyboard", "a_finding_about_a_mark_the_figure_has_not_got_is_not_about_no_mark"],
+        ),
+        Mutation(
+            "warning-box-painted-error", "src/storyboard.rs",
+            "        } else {\n            OTHER_COLOR\n        };",
+            "        } else {\n            ERROR_COLOR\n        };",
+            ["--test", "storyboard", "a_warning_about_a_mark_is_still_boxed"],
+        ),
+        Mutation(
+            "invisible-bar-box-invented", "src/place.rs",
+            "        if matches!(mark, Mark::Bar { .. } | Mark::GroupedBar { .. })",
+            "        if false && matches!(mark, Mark::Bar { .. } | Mark::GroupedBar { .. })",
+            ["--test", "drawn_boundary", "bars_with_no_visible_height_have_no_box"],
+        ),
+        Mutation(
+            "oversize-number-plate-accepted", "src/storyboard.rs",
+            "        if plate > area.width || PLATE_HEIGHT > area.height {", "        if false {",
+            ["--test", "drawn_boundary", "a_number_plate_wider_than_the_canvas_is_refused"],
+        ),
+        Mutation(
+            "mark-text-reported-twice", "src/model.rs",
+            "            let values = mark.values();",
+            "            refusals.extend(mark.text_fields().into_iter().filter_map(|(field, text)| unwritable(&field, text, Some(index))));\n            let values = mark.values();",
+            ["--test", "drawn_boundary", "an_unwritable_mark_field_is_reported_once"],
+        ),
+    ])
+    # Independent review: all emitted strings and actual filled intersections.
+    cases.extend([
+        Mutation(
+            "mark-color-xml-unchecked", "src/model.rs",
+            '[("label", label), ("color", color)]',
+            '[("label", label), ("color", None)]',
+            ["--test", "drawn_boundary", "colors_obey_the_same_xml_character_contract_as_names"],
+        ),
+        Mutation(
+            "series-color-xml-unchecked", "src/model.rs",
+            '                    fields.push((format!("series[{index}].color"), color));', "",
+            ["--test", "drawn_boundary", "colors_obey_the_same_xml_character_contract_as_names"],
+        ),
+        Mutation(
+            "inverted-y-range-accepted", "src/render.rs",
+            "        if !finite || upper <= lower {", "        if !finite {",
+            ["--test", "drawn_boundary", "an_inverted_computed_axis_is_refused_before_boxing"],
+        ),
+        Mutation(
+            "nonoverlapping-bars-reported", "src/inspect.rs",
+            "            if !bars_overlap(figure, *earlier, *later) {",
+            "            if false {",
+            ["--test", "drawn_boundary", "only_filled_bar_intersections_are_overlaps"],
+        ),
+        Mutation(
+            "grouped-overlaps-unchecked", "src/inspect.rs",
+            "        .filter(|(_, mark)| mark.categories().is_some())",
+            "        .filter(|(_, mark)| matches!(mark, Mark::Bar { .. }))",
+            ["--test", "drawn_boundary", "grouped_and_mixed_bars_are_checked_in_their_own_subslots"],
+        ),
+        Mutation(
+            "bar-subslots-confused", "src/inspect.rs",
+            "bar_value(b, category, j)", "bar_value(b, category, i)",
+            ["--test", "drawn_boundary", "grouped_and_mixed_bars_are_checked_in_their_own_subslots"],
+        ),
+    ])
+    cases.append(Mutation(
+        "bar-overlap-ignores-axis-minimum", "src/inspect.rs",
+        "    let minimum = figure.y_min.unwrap_or(f64::NEG_INFINITY);",
+        "    let minimum = f64::NEG_INFINITY;",
+        ["--test", "drawn_boundary", "only_filled_bar_intersections_are_overlaps"],
+    ))
+    cases.append(Mutation(
+        "nonfinite-computed-range-accepted", "src/render.rs",
+        "        if !finite || upper <= lower {", "        if upper <= lower {",
+        ["--test", "drawn_boundary", "a_nonfinite_computed_span_is_refused"],
+    ))
+    cases.append(Mutation(
+        "agent-code-list-incomplete", "llms.txt",
+        "inapplicable-axis-setting (error), ", "",
+        ["--test", "docs", "the_agent_code_list_matches_the_codebook"],
+    ))
     return cases
 
 

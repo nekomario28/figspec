@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::Figure;
+use crate::model::{Figure, Mark};
 
 /// `error` is the only severity that fails a build.
 pub const ERROR: &str = "error";
@@ -58,6 +58,56 @@ fn problem(code: &str, severity: &str, message: String, mark: Option<usize>) -> 
     }
 }
 
+fn bar_series(mark: &Mark) -> usize {
+    match mark {
+        Mark::Bar { .. } => 1,
+        Mark::GroupedBar { series, .. } => series.len(),
+        _ => 0,
+    }
+}
+
+fn bar_value(mark: &Mark, category: usize, series_index: usize) -> Option<f64> {
+    match mark {
+        Mark::Bar { values, .. } => values.get(category).copied(),
+        Mark::GroupedBar { series, .. } => series.get(series_index)?.values.get(category).copied(),
+        _ => None,
+    }
+}
+
+/// Filled bars overlap only in a shared category, intersecting subslots and on
+/// the same side of zero. Sweep the two partitions rather than comparing every
+/// pair of series. Separate marks use the same 0.8-wide category slot in kuva.
+fn bars_overlap(figure: &Figure, earlier: usize, later: usize) -> bool {
+    let (a, b) = (&figure.marks[earlier], &figure.marks[later]);
+    let minimum = figure.y_min.unwrap_or(f64::NEG_INFINITY);
+    let (na, nb) = (bar_series(a), bar_series(b));
+    let categories = a
+        .categories()
+        .map_or(0, <[_]>::len)
+        .min(b.categories().map_or(0, <[_]>::len));
+    for category in 0..categories {
+        let (mut i, mut j) = (0, 0);
+        while i < na && j < nb {
+            if let (Some(x), Some(y)) = (bar_value(a, category, i), bar_value(b, category, j)) {
+                let low = x.min(0.0).max(y.min(0.0)).max(minimum);
+                let high = x.max(0.0).min(y.max(0.0));
+                if x.is_finite() && y.is_finite() && low < high {
+                    return true;
+                }
+            }
+            let end_a = (i + 1) as f64 / na as f64;
+            let end_b = (j + 1) as f64 / nb as f64;
+            if end_a <= end_b {
+                i += 1;
+            }
+            if end_b <= end_a {
+                j += 1;
+            }
+        }
+    }
+    false
+}
+
 /// Inspect a figure.
 ///
 /// Two kinds of finding, and the difference matters:
@@ -72,6 +122,33 @@ pub fn inspect(figure: &Figure) -> Report {
         .into_iter()
         .map(|refusal| problem(refusal.code, ERROR, refusal.message, refusal.mark))
         .collect();
+
+    // Separate bar marks use the same categorical slots, not adjacent series.
+    // This is a finding rather than a refusal: rendering shows the overplotting.
+    let bars: Vec<usize> = figure
+        .marks
+        .iter()
+        .enumerate()
+        .filter(|(_, mark)| mark.categories().is_some())
+        .map(|(index, _)| index)
+        .collect();
+    for (position, later) in bars.iter().enumerate() {
+        for earlier in &bars[..position] {
+            if !bars_overlap(figure, *earlier, *later) {
+                continue;
+            }
+            problems.push(problem(
+                "overlapping-bars",
+                ERROR,
+                format!(
+                    "mark {later} has filled bars overlapping mark {earlier}'s in the same \
+                     category slots; later marks are drawn over earlier ones; declare one \
+                     `grouped_bar` with a series per set of values"
+                ),
+                Some(*later),
+            ));
+        }
+    }
 
     if let Some(min) = figure.y_min {
         // A bar's length is the value. Trimming the axis trims the length.

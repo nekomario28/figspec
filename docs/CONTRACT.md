@@ -43,6 +43,34 @@ renders to SVG, which has no pixel buffer, and `inspect` reports nothing about i
 because a pixel budget is not a property of the figure. Values are computed in
 `f64` before the backend multiplies, so the limit is a refusal and not a panic.
 
+**The plot area.** Every drawing route refuses a canvas whose computed axes leave
+no positive plot width or height, or whose computed axis ranges are not finite
+and increasing with finite spans.
+An explicit `y_min` above the data does not declare an inverted-axis mode.
+These are layout constraints, not model errors:
+`inspect` does not render to discover it. The refusal names the declared size and
+axes' space requirements; no output is written. A storyboard also refuses a number
+plate larger than the canvas instead of clipping or abbreviating finding numbers.
+
+**Storyboard locations.** A number plate stays inside the canvas; the box still
+points at the mark's extent. Findings with no mark are `unlocated`. Findings naming
+a missing mark or a mark without visible height are `unboxable`, not “about no
+mark”. Neither bucket gets an invented box. These buckets are exposed by the Rust
+API and distinguished in CLI output.
+
+**Text.** Titles, axis labels, categories, mark labels, series labels, heatmap
+labels and colour strings must use XML 1.0 characters. `unwritable-character` is an error from the
+shared refusal list, so SVG, PNG and storyboard routes agree on this text contract.
+Tab, newline, carriage return and valid Unicode outside the forbidden ranges are
+not refused merely for being non-ASCII.
+
+**Bar overlays.** `overlapping-bars` covers separate simple or grouped bar marks
+whose nonzero filled regions overlap: the same category, intersecting series
+subslots, and intersecting value intervals after `y_min` clipping. Merely sharing
+a baseline or having values
+in disjoint categories is not an overlap. One grouped bar is the representation
+for adjacent series.
+
 **The report.** `inspect` returns a list of problems, each with `code`, `severity`,
 `message`, and `mark` when the problem is about one mark (0-based). `--json` prints
 the same thing with a `problems` key. Keys are only ever added.
@@ -96,8 +124,9 @@ x86_64 and aarch64, macOS arm64, Windows x86_64, one abi3 wheel for CPython ≥ 
 
 A figure is either reported on or refused. The checks and the renderer work from
 **one list**: `Figure::refusals()` is what `inspect` reports and the only thing the
-renderer refuses, so a rule cannot hold in one and be ignored by the other —
-`tests/refusals.rs` checks it in both directions. A model that reads as clean has
+renderer refuses about the model, so a rule cannot hold in one and be ignored by the other —
+`tests/refusals.rs` checks it in both directions. Drawing-route constraints (the
+raster budget, plot area and number-plate fit) are checked separately. A model that reads as clean has
 been fully read: an unknown field, an unknown ramp, an empty mark, an undeclared
 axis setting for a matrix and a matrix that is not rectangular are all refused with
 the mark and the reason, never skipped.

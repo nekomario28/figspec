@@ -35,6 +35,11 @@ pub struct PlotArea {
     pub y_range: (f64, f64),
     pub log_x: bool,
     pub log_y: bool,
+    /// The canvas the rectangle is inside, so a label drawn on top of the picture
+    /// can be kept within it. Read from the same layout as the rectangle: one
+    /// source, one picture.
+    pub width: f64,
+    pub height: f64,
 }
 
 /// A mark's rectangle in the picture, in pixels.
@@ -77,6 +82,8 @@ impl PlotArea {
             top: computed.margin_top,
             right: computed.width - computed.margin_right,
             bottom: computed.height - computed.margin_bottom,
+            width: computed.width,
+            height: computed.height,
             x_range: computed.x_range,
             y_range: computed.y_range,
             log_x: computed.log_x,
@@ -123,6 +130,13 @@ impl PlotArea {
         // and a bar's baseline is usually outside a truncated range.
         let (x_low, x_high) = clamp_pair(x_low, x_high, self.x_range);
         let (y_low, y_high) = clamp_pair(y_low, y_high, self.y_range);
+        // A bar whose baseline and value map to the same pixel has no visible
+        // height. Padding it would fabricate a location for an invisible mark.
+        if matches!(mark, Mark::Bar { .. } | Mark::GroupedBar { .. })
+            && self.y_pixel(y_low) == self.y_pixel(y_high)
+        {
+            return None;
+        }
         let box_ = MarkBox {
             left: self.x_pixel(x_low),
             right: self.x_pixel(x_high),

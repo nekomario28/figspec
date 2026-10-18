@@ -19,7 +19,7 @@ use kuva::render::layout::ComputedLayout;
 use crate::inspect::{Report, ERROR};
 use crate::model::Figure;
 use crate::place::{MarkBox, PlotArea};
-use crate::render::{geometry, normalized_svg, RenderError};
+use crate::render::{geometry, svg_of, RenderError};
 
 /// A box drawn on the storyboard, and the findings it points at.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,10 +63,7 @@ pub fn of(figure: &Figure, report: &Report) -> Result<Storyboard, RenderError> {
     let (plots, layout) = geometry(figure)?;
     let computed = ComputedLayout::from_layout(&layout);
     let area = PlotArea::of(&computed);
-    let svg = normalized_svg(
-        kuva::backend::svg::SvgBackend
-            .render_scene(&kuva::render::render::render_multiple(plots, layout)),
-    );
+    let svg = svg_of(plots, layout);
 
     // Group by mark, in report order, so one mark's findings share one box: two
     // identical rectangles on top of each other is a worse picture, not more

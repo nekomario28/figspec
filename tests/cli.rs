@@ -54,6 +54,29 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
+fn unsupported_colors_fail_without_panics_or_output_files() {
+    let dir = scratch("unsupported-color");
+    let path = dir.join("color.json");
+    std::fs::write(
+        &path,
+        r##"{"marks":[{"kind":"bar","categories":["a"],"values":[1],"color":"#éx"}]}"##,
+    )
+    .unwrap();
+    let report = run(&["inspect", path.to_str().unwrap(), "--json"]);
+    assert_eq!(code(&report), 1);
+    assert!(String::from_utf8_lossy(&report.stdout).contains("unsupported-color"));
+    for (command, suffix) in [("render", "svg"), ("render", "png"), ("storyboard", "svg")] {
+        let out = dir.join(format!("{command}.{suffix}"));
+        let _ = std::fs::remove_file(&out);
+        let output = run(&[command, path.to_str().unwrap(), "-o", out.to_str().unwrap()]);
+        assert_eq!(code(&output), 2, "{}", stderr(&output));
+        assert!(stderr(&output).contains("color"));
+        assert!(!stderr(&output).contains("panicked"));
+        assert!(!out.exists());
+    }
+}
+
+#[test]
 fn a_second_model_file_is_refused_rather_than_ignored() {
     let dir = scratch("second-model");
     model(&dir.join("a.json"));

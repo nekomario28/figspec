@@ -42,6 +42,40 @@ def test_the_same_model_renders_to_the_same_bytes():
     assert figspec.render_png(model) == figspec.render_png(model)
 
 
+@pytest.mark.parametrize("kind", ["line", "scatter", "bar", "grouped_bar"])
+def test_unsupported_colors_raise_value_errors_not_backend_panics(kind):
+    mark = {"kind": kind, "color": "#éx"}
+    if kind in {"line", "scatter"}:
+        mark["points"] = [[0, 1], [1, 2]]
+    else:
+        mark.update(categories=["a"], values=[1])
+    if kind == "grouped_bar":
+        mark = {"kind": kind, "categories": ["a"], "series": [{"values": [1], "color": "#éx"}]}
+    model = honest_model() | {"marks": [mark]}
+    assert [p["code"] for p in figspec.inspect(model)] == ["unsupported-color"]
+    for render in [figspec.render_svg, figspec.render_png, figspec.storyboard_svg]:
+        with pytest.raises(ValueError, match="color"):
+            render(model)
+
+
+def test_internal_id_normalization_preserves_user_text():
+    text = "kuva-clip-999 and url(#kuva-clip-999)"
+    model = honest_model() | {"title": text}
+    for render in [figspec.render_svg, figspec.storyboard_svg]:
+        drawn = render(model)
+        assert f">{text}</text>" in drawn
+        assert render(model) == drawn
+
+
+@pytest.mark.parametrize("field", ["row_labels", "col_labels"])
+def test_heatmap_axis_labels_need_not_be_declared_together(field):
+    model = {"marks": [{"kind": "heatmap", "values": [[1, 2], [3, 4]], field: ["A-NAME", "B-NAME"]}]}
+    for render in [figspec.render_svg, figspec.storyboard_svg]:
+        drawn = render(model)
+        for name in ["A-NAME", "B-NAME"]:
+            assert drawn.count(f">{name}</text>") == 1
+
+
 def test_the_model_is_what_is_rendered(tmp_path):
     model = honest_model()
     path = figspec.save(model, tmp_path / "revenue.svg")

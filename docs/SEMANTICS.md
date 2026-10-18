@@ -231,3 +231,42 @@ The SVG probes check geometry, document parsing and report-number agreement, not
 font rasterization or pixel-identical output across platforms. Zero-height bars
 remain valid model data; only an invented visual location is removed. Ordinary
 bar/line overlays are not reported as `overlapping-bars`.
+
+## Sixth review: strings at the backend boundary
+
+The previous XML-character audit did not exercise the colour parser's byte
+slices, internal-id renaming, or independently optional heatmap axis names.
+
+### Found and fixed
+
+- `#éx` and `#aébcd` passed inspection, then panicked in the engine's colour
+  parser: a byte slice ended inside a UTF-8 character. All four colour-bearing
+  mark kinds reproduced this. `unsupported-color` now refuses such input before
+  the parser is called, via the model's shared refusal list.
+- Valid CSS is not necessarily a shared SVG/PNG colour. A bar declared with
+  `rebeccapurple` or `rgba(1,2,3,0.5)` exited 0 but its PNG fill was absent:
+  an interior pixel was white (255,255,255), versus (255,0,0) for the red control.
+  Unsupported CSS and non-finite `rgb` components are now refused, not silently
+  omitted or cast. Known colours and explicit no-paint declarations still draw.
+- A title containing `kuva-clip-999` was rewritten to an internal clip id.
+  Renumbering now changes typed scene clip ids and their engine-generated
+  definitions, never the completed document's arbitrary strings. Tests preserve
+  titles, axis labels, categories and legends, while repeated renders still have
+  matching deterministic clip definitions and references.
+- Declaring only heatmap row names, or only column names, silently dropped those
+  names. The layout now handles each axis independently; it is the single owner
+  of axis labels, with no redundant heatmap label copy for unused tooltips.
+
+### Independent review and refinement
+
+A separate read-only review caught an overbroad first fix: requiring every colour
+string to be ASCII rejected `rgb(12,\u00a034,56)`, although the engine trims that
+Unicode whitespace and can draw the finite RGB components in both formats.
+The acceptance regression failed before the restriction was narrowed to hex
+digits. Self-review also reproduced `#+1+2+3` rendering as `#010203`: Rust's integer
+parser accepts leading plus signs, but those are not CSS hex digits. Hex inputs
+now require exactly three or six ASCII hex digits before the backend parser runs.
+
+The new Rust and Python regressions were run against the old behavior and failed
+before fixes. These checks do not claim arbitrary CSS support or cross-platform
+font/pixel equality.

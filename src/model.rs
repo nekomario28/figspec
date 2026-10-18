@@ -412,6 +412,34 @@ fn unwritable(field: &str, text: &str, mark: Option<usize>) -> Option<Refusal> {
     })
 }
 
+/// Refuse colors the common backend cannot draw, before its UTF-8-unsafe hex
+/// parser is called. Valid CSS alone is insufficient: unknown CSS is unpainted
+/// in PNG, and non-finite rgb components are silently cast to integers.
+fn unsupported_color(field: &str, text: &str, mark: Option<usize>) -> Option<Refusal> {
+    use kuva::render::color::Color;
+    let nonfinite_rgb = text
+        .strip_prefix("rgb(")
+        .and_then(|inner| inner.strip_suffix(')'))
+        .is_some_and(|inner| {
+            inner.split(',').any(|part| {
+                part.trim()
+                    .parse::<f64>()
+                    .is_ok_and(|value| !value.is_finite())
+            })
+        });
+    let valid_hex = text.strip_prefix('#').is_none_or(|hex| {
+        matches!(hex.len(), 3 | 6) && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+    });
+    let supported = valid_hex && !nonfinite_rgb && !matches!(Color::from(text), Color::Css(_));
+    (!supported).then(|| Refusal {
+        code: "unsupported-color",
+        mark,
+        message: format!(
+            "{field} {text:?} is not supported by both SVG and PNG; use #RGB, #RRGGBB, a supported named color, finite rgb(r,g,b), or none"
+        ),
+    })
+}
+
 /// Why a declaration could not be read.
 #[derive(Debug)]
 pub struct ModelError {
@@ -488,7 +516,14 @@ impl Figure {
         refusals.extend(
             self.text_fields()
                 .into_iter()
-                .filter_map(|(field, text, mark)| unwritable(&field, text, mark)),
+                .filter_map(|(field, text, mark)| {
+                    // Character errors take precedence; do not report one color twice.
+                    unwritable(&field, text, mark).or_else(|| {
+                        (field == "color" || field.ends_with(".color"))
+                            .then(|| unsupported_color(&field, text, mark))
+                            .flatten()
+                    })
+                }),
         );
         for (index, mark) in self.marks.iter().enumerate() {
             let values = mark.values();

@@ -509,6 +509,72 @@ def mutations() -> list[Mutation]:
         "inapplicable-axis-setting (error), ", "",
         ["--test", "docs", "the_agent_code_list_matches_the_codebook"],
     ))
+    cases.extend([
+        Mutation(
+            "unsupported-colors-accepted", "src/model.rs",
+            '    let supported = valid_hex && !nonfinite_rgb && !matches!(Color::from(text), Color::Css(_));',
+            '    let supported = true;',
+            ["--test", "render_text", "unsupported_colors_are_reported_and_refused_without_panicking"],
+        ),
+        Mutation(
+            "nonascii-hex-reaches-parser", "src/model.rs",
+            'valid_hex && !nonfinite_rgb',
+            'true && !nonfinite_rgb',
+            ["--test", "render_text", "unsupported_colors_are_reported_and_refused_without_panicking"],
+        ),
+        Mutation(
+            "nonfinite-rgb-components-accepted", "src/model.rs",
+            'valid_hex && !nonfinite_rgb',
+            'valid_hex && true',
+            ["--test", "render_text", "unsupported_colors_are_reported_and_refused_without_panicking"],
+        ),
+        Mutation(
+            "simple-mark-color-unchecked", "src/model.rs",
+            '(field == "color" || field.ends_with(".color"))',
+            '(field.ends_with(".color"))',
+            ["--test", "render_text", "unsupported_colors_are_reported_and_refused_without_panicking"],
+        ),
+        Mutation(
+            "grouped-series-color-unchecked", "src/model.rs",
+            '(field == "color" || field.ends_with(".color"))',
+            '(field == "color")',
+            ["--test", "render_text", "unsupported_colors_are_reported_and_refused_without_panicking"],
+        ),
+        Mutation(
+            "declared-text-renamed-as-id", "src/render.rs",
+            '    kuva::backend::svg::SvgBackend.render_scene(&scene)',
+            '    kuva::backend::svg::SvgBackend.render_scene(&scene).replace("kuva-clip-999", "kuva-clip-0")',
+            ["--test", "render_text", "engine_id_normalization_never_rewrites_declared_text"],
+        ),
+        Mutation(
+            "scene-clip-id-not-normalized", "src/render.rs",
+            '        *id = normalized;', '',
+            ["--test", "render_text", "clip_declarations_and_references_stay_consistent_across_renders"],
+        ),
+        Mutation(
+            "heatmap-row-labels-dropped", "src/render.rs",
+            '                layout = layout.with_y_categories(rows.clone());', '',
+            ["--test", "render_text", "heatmap_labels_are_independent_axis_declarations"],
+        ),
+        Mutation(
+            "heatmap-column-labels-dropped", "src/render.rs",
+            '                layout = layout.with_x_categories(cols.clone());', '',
+            ["--test", "render_text", "heatmap_labels_are_independent_axis_declarations"],
+        ),
+    ])
+    cases.extend([
+        Mutation(
+            "signed-hex-components-accepted", "src/model.rs",
+            "hex.bytes().all(|byte| byte.is_ascii_hexdigit())", "true",
+            ["--test", "render_text", "malformed_hex_is_not_a_rgb_triplet"],
+        ),
+        Mutation(
+            "rgb-whitespace-overrefused", "src/model.rs",
+            "valid_hex && !nonfinite_rgb && !matches!(Color::from(text), Color::Css(_))",
+            "text.is_ascii() && valid_hex && !nonfinite_rgb && !matches!(Color::from(text), Color::Css(_))",
+            ["--test", "render_text", "shared_colors_still_draw"],
+        ),
+    ])
     return cases
 
 

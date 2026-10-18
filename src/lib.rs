@@ -108,6 +108,11 @@ pub const CODEBOOK: &[(&str, &str, &str)] = &[
         "a declared string contains a character XML does not allow in a document",
     ),
     (
+        "unsupported-color",
+        ERROR,
+        "a color cannot be drawn consistently by both SVG and PNG",
+    ),
+    (
         "non-positive-on-log-scale",
         ERROR,
         "a log axis is asked to place zero or a negative value",

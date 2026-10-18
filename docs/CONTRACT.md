@@ -62,7 +62,17 @@ API and distinguished in CLI output.
 labels and colour strings must use XML 1.0 characters. `unwritable-character` is an error from the
 shared refusal list, so SVG, PNG and storyboard routes agree on this text contract.
 Tab, newline, carriage return and valid Unicode outside the forbidden ranges are
-not refused merely for being non-ASCII.
+not refused merely for being non-ASCII. Internal SVG clip-id normalization never
+rewrites declared text. Heatmap row and column names are independent declarations:
+either axis may be named without requiring names on the other.
+
+**Colours.** The shared model refusal `unsupported-color` rejects colors the
+SVG and PNG backends cannot both draw. Use ASCII `#RGB`, `#RRGGBB`, backend-known
+named colors, `rgb(r,g,b)` with finite numeric components, or `none`/`transparent`
+for no paint. The backend clamps and rounds numeric RGB components to bytes.
+Arbitrary CSS (including alpha hex, `rgba(...)` and unknown names) is not a shared
+color contract: emitting it to SVG while silently omitting paint in PNG is refused.
+XML character errors take precedence over colour errors on the same field.
 
 **Bar overlays.** `overlapping-bars` covers separate simple or grouped bar marks
 whose nonzero filled regions overlap: the same category, intersecting series

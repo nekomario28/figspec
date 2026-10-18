@@ -321,6 +321,7 @@ fn the_codebook_names_every_code_the_checks_emit() {
         "negative-size",
         "overlapping-bars",
         "unwritable-character",
+        "unsupported-color",
         "no-title",
         "no-axis-label",
     ];

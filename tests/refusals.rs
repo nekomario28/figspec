@@ -61,6 +61,16 @@ fn broken() -> Vec<(&'static str, Figure, &'static str)> {
     logged.y_scale = Scale::Log;
     vec![
         (
+            "a color that cannot be drawn",
+            Figure::new().with_mark(Mark::Bar {
+                categories: vec!["a".into()],
+                values: vec![1.0],
+                color: Some("#éx".into()),
+                label: None,
+            }),
+            "unsupported-color",
+        ),
+        (
             // A marker size is a length, and a negative one is the same fault a
             // negative error magnitude is: the renderer used to pick a size for it
             // and draw it, and the report called it clean.
@@ -317,6 +327,7 @@ fn the_new_codes_are_the_errors_a_caller_sees() {
         "ambiguous-labels",
         "overlapping-bars",
         "unwritable-character",
+        "unsupported-color",
     ] {
         let (_, severity, _) = figspec::CODEBOOK
             .iter()

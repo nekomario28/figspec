@@ -120,6 +120,7 @@ Few on purpose. Each one says what is wrong, where, and what to do instead.
 | `truncated-baseline` | error | bars start above zero, so their lengths no longer mean their values |
 | `overlapping-bars` | error | filled bars in separate marks overlap in the same category slots |
 | `unwritable-character` | error | a declared string contains a character XML does not allow in a document |
+| `unsupported-color` | error | a color cannot be drawn consistently by both SVG and PNG |
 | `mismatched-lengths` | error | a collection disagrees in number with what it annotates: a group's series, or an error array and its points |
 | `non-finite-value` | error | a coordinate is NaN or infinite and cannot be placed |
 | `non-positive-on-log-scale` | error | a log axis is asked to place zero or a negative value |
